@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: energybalance
+      POSTGRES_USER: energybalance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - energybalance-db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: src/EnergyBalance.Api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      ConnectionStrings__EnergyBalanceDb: "Host=postgres;Port=5432;Database=energybalance;Username=energybalance;Password=${POSTGRES_PASSWORD:-changeme}"
+      ASPNETCORE_ENVIRONMENT: "Production"
+    ports:
+      - "8080:8080"
+
+  worker:
+    build:
+      context: .
+      dockerfile: src/EnergyBalance.Worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      ConnectionStrings__EnergyBalanceDb: "Host=postgres;Port=5432;Database=energybalance;Username=energybalance;Password=${POSTGRES_PASSWORD:-changeme}"
+      Opc__EndpointUrl: "opc.tcp://scada-host:4840"
+    # Для прямого опроса приборов по RS-485/USB требуется проброс устройств в контейнер, например:
+    # devices:
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"
+
+volumes:
+  energybalance-db:

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>EnergyBalance.Api</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnergyBalance.Domain\EnergyBalance.Domain.csproj" />
+    <ProjectReference Include="..\EnergyBalance.DataAccess\EnergyBalance.DataAccess.csproj" />
+    <ProjectReference Include="..\EnergyBalance.BalanceEngine\EnergyBalance.BalanceEngine.csproj" />
+    <ProjectReference Include="..\EnergyBalance.Application\EnergyBalance.Application.csproj" />
+  </ItemGroup>
+
+</Project>
