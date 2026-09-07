@@ -13,7 +13,18 @@ public class OpcTagMapping
     public string ActiveEnergyTariff2Suffix { get; init; } = ".ActiveEnergy.T2";
     public string ActiveEnergyTariff3Suffix { get; init; } = ".ActiveEnergy.T3";
     public string ActiveEnergyTariff4Suffix { get; init; } = ".ActiveEnergy.T4";
-    public string ReactiveEnergyTotalSuffix { get; init; } = ".ReactiveEnergy.Total";
+
+    /// <summary>
+    /// Энергия «выдача» (А-) по тарифу 1 — для точек с возможным двусторонним перетоком.
+    /// Состав A+/A-/P+/P- подтверждён интерфейсом ПО «Пирамида 2.0» (см. docs/METER_DATA_CONCLUSION.md).
+    /// </summary>
+    public string ActiveEnergyExportTariff1Suffix { get; init; } = ".ActiveEnergyExport.T1";
+    public string ActiveEnergyExportTariff2Suffix { get; init; } = ".ActiveEnergyExport.T2";
+    public string ActiveEnergyExportTariff3Suffix { get; init; } = ".ActiveEnergyExport.T3";
+    public string ActiveEnergyExportTariff4Suffix { get; init; } = ".ActiveEnergyExport.T4";
+
+    public string ReactiveEnergyImportSuffix { get; init; } = ".ReactiveEnergy.Import";
+    public string ReactiveEnergyExportSuffix { get; init; } = ".ReactiveEnergy.Export";
 
     public string VoltageASuffix { get; init; } = ".Ua";
     public string VoltageBSuffix { get; init; } = ".Ub";

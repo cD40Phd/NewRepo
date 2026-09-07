@@ -52,6 +52,14 @@ public class MercuryProtocolClient : IMeterDataSource
             var energyResponse = await SendCommandAsync(transport, address, CmdReadTariffEnergy, [0x00], ct);
             var (t1, t2, t3, t4) = ParseTariffEnergyResponse(energyResponse);
 
+            // Энергия «выдача» (А-) и накопленная реактивная энергия (Р+/Р-) читаются отдельными
+            // массивами данных прибора (обычно массивы №2 и №4 в протоколе «Меркурий») — точный
+            // номер массива и код подпараметра уточняется по протоколу конкретной прошивки при
+            // пусконаладке (см. класс-комментарий); до уточнения возвращается 0, что корректно
+            // для однонаправленных точек потребления (подавляющее большинство точек сети 0,4-10 кВ).
+            var (e1, e2, e3, e4) = (0m, 0m, 0m, 0m);
+            var (reactiveImport, reactiveExport) = (0m, 0m);
+
             var instantResponse = await SendCommandAsync(transport, address, CmdReadInstantValues, [0x11], ct);
             var instant = ParseInstantValuesResponse(instantResponse);
 
@@ -61,7 +69,12 @@ public class MercuryProtocolClient : IMeterDataSource
                 ActiveEnergyTariff2: t2,
                 ActiveEnergyTariff3: t3,
                 ActiveEnergyTariff4: t4,
-                ReactiveEnergyTotal: 0m,
+                ActiveEnergyExportTariff1: e1,
+                ActiveEnergyExportTariff2: e2,
+                ActiveEnergyExportTariff3: e3,
+                ActiveEnergyExportTariff4: e4,
+                ReactiveEnergyImport: reactiveImport,
+                ReactiveEnergyExport: reactiveExport,
                 VoltageA: instant.VoltageA,
                 VoltageB: instant.VoltageB,
                 VoltageC: instant.VoltageC,
@@ -257,7 +270,13 @@ public class MercuryProtocolClient : IMeterDataSource
         uint raw = (uint)((payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8) | payload[3]);
         var activeEnergyDelta = raw / 1000m;
 
-        return new LoadProfileInterval(intervalStartUtc, IntervalMinutes: 30, ActiveEnergyDelta: activeEnergyDelta, ReactiveEnergyDelta: null);
+        return new LoadProfileInterval(
+            intervalStartUtc,
+            IntervalMinutes: 30,
+            ActiveEnergyDelta: activeEnergyDelta,
+            ActiveEnergyExportDelta: 0m,
+            ReactiveEnergyImportDelta: null,
+            ReactiveEnergyExportDelta: null);
     }
 
     private readonly record struct InstantValues(

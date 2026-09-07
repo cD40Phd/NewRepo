@@ -12,6 +12,7 @@ public record MeteringPointDto(
 public record ReadingDto(
     DateTime TimestampUtc,
     decimal ActiveEnergyTotal,
+    decimal ActiveEnergyExportTotal,
     decimal? VoltageA,
     decimal? VoltageB,
     decimal? VoltageC,
@@ -20,7 +21,7 @@ public record ReadingDto(
     string Quality,
     bool TamperFlag);
 
-public record LoadProfilePointDto(DateTime IntervalStartUtc, int IntervalMinutes, decimal ActiveEnergyDelta, string Quality);
+public record LoadProfilePointDto(DateTime IntervalStartUtc, int IntervalMinutes, decimal ActiveEnergyDelta, decimal ActiveEnergyExportDelta, string Quality);
 
 public record BalanceCalculationResultDto(
     long Id,
@@ -31,6 +32,7 @@ public record BalanceCalculationResultDto(
     int Version,
     decimal SupplyEnergyKwh,
     decimal ConsumptionEnergyKwh,
+    decimal OwnNeedsEnergyKwh,
     decimal NormativeLossKwh,
     decimal ActualLossKwh,
     decimal ImbalanceKwh,

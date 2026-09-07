@@ -39,7 +39,7 @@ public class ReportsController : ControllerBase
             .ToList();
 
         var csv = new StringBuilder();
-        csv.AppendLine("Группа;Код;Период с;Период по;Отпуск, кВт.ч;Потребление, кВт.ч;Норм. потери, кВт.ч;Факт. потери, кВт.ч;Небаланс, кВт.ч;Небаланс, %;Статус;Утверждено");
+        csv.AppendLine("Группа;Код;Период с;Период по;Отпуск, кВт.ч;Потребление, кВт.ч;Собственные нужды, кВт.ч;Норм. потери, кВт.ч;Факт. потери, кВт.ч;Небаланс, кВт.ч;Небаланс, %;Статус;Утверждено");
 
         foreach (var r in results)
         {
@@ -51,6 +51,7 @@ public class ReportsController : ControllerBase
                 r.PeriodEndUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 r.SupplyEnergyKwh.ToString(CultureInfo.InvariantCulture),
                 r.ConsumptionEnergyKwh.ToString(CultureInfo.InvariantCulture),
+                r.OwnNeedsEnergyKwh.ToString(CultureInfo.InvariantCulture),
                 r.NormativeLossKwh.ToString(CultureInfo.InvariantCulture),
                 r.ActualLossKwh.ToString(CultureInfo.InvariantCulture),
                 r.ImbalanceKwh.ToString(CultureInfo.InvariantCulture),

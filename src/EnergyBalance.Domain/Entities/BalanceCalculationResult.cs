@@ -23,14 +23,22 @@ public class BalanceCalculationResult
     /// <summary>Суммарный отпуск (приход) электроэнергии в границы группы, кВт·ч (в расчётных величинах, с учётом Ктт/Ктн).</summary>
     public decimal SupplyEnergyKwh { get; set; }
 
-    /// <summary>Суммарное потребление (расход) электроэнергии из группы, кВт·ч.</summary>
+    /// <summary>Суммарное потребление (расход, передача подчинённым точкам учёта) электроэнергии из группы, кВт·ч.</summary>
     public decimal ConsumptionEnergyKwh { get; set; }
+
+    /// <summary>
+    /// Суммарный расход на собственные нужды балансируемого объекта, кВт·ч (роль
+    /// <see cref="Enums.BalanceMemberRole.OwnNeeds"/>) — не считается потерей, вычитается
+    /// из отпуска наравне с потреблением. Состав подтверждён интерфейсом «Баланс
+    /// электроэнергии» ПО «Пирамида 2.0» (колонка «Собственные нужды»).
+    /// </summary>
+    public decimal OwnNeedsEnergyKwh { get; set; }
 
     /// <summary>Нормативные (договорные) потери, кВт·ч.</summary>
     public decimal NormativeLossKwh { get; set; }
 
-    /// <summary>Фактические потери = Отпуск − Потребление, кВт·ч.</summary>
-    public decimal ActualLossKwh => SupplyEnergyKwh - ConsumptionEnergyKwh;
+    /// <summary>Фактические потери = Отпуск − Потребление − Собственные нужды, кВт·ч.</summary>
+    public decimal ActualLossKwh => SupplyEnergyKwh - ConsumptionEnergyKwh - OwnNeedsEnergyKwh;
 
     /// <summary>Небаланс = Фактические потери − Нормативные потери, кВт·ч.</summary>
     public decimal ImbalanceKwh => ActualLossKwh - NormativeLossKwh;

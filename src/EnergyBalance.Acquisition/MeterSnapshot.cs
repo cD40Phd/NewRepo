@@ -3,7 +3,10 @@ namespace EnergyBalance.Acquisition;
 /// <summary>
 /// Сырой результат опроса текущих показаний прибора учёта, до сопоставления с доменной
 /// сущностью <see cref="EnergyBalance.Domain.Entities.Reading"/> (сопоставление и сохранение
-/// выполняет <see cref="MeterDataImportService"/>).
+/// выполняет <see cref="MeterDataImportService"/>). Энергия «выдача» (А-) и обе составляющие
+/// реактивной энергии (Р+/Р-) обязательны к заполнению драйвером (нулём — если прибор/точка
+/// однонаправленные) по аналогии с параметрами «Энергия A-», «Энергия P+», «Энергия P-»
+/// в интерфейсе ПО «Пирамида 2.0».
 /// </summary>
 public record MeterSnapshot(
     DateTime TimestampUtc,
@@ -11,7 +14,12 @@ public record MeterSnapshot(
     decimal ActiveEnergyTariff2,
     decimal ActiveEnergyTariff3,
     decimal ActiveEnergyTariff4,
-    decimal ReactiveEnergyTotal,
+    decimal ActiveEnergyExportTariff1,
+    decimal ActiveEnergyExportTariff2,
+    decimal ActiveEnergyExportTariff3,
+    decimal ActiveEnergyExportTariff4,
+    decimal ReactiveEnergyImport,
+    decimal ReactiveEnergyExport,
     decimal? VoltageA,
     decimal? VoltageB,
     decimal? VoltageC,
@@ -27,4 +35,6 @@ public record LoadProfileInterval(
     DateTime IntervalStartUtc,
     int IntervalMinutes,
     decimal ActiveEnergyDelta,
-    decimal? ReactiveEnergyDelta);
+    decimal ActiveEnergyExportDelta,
+    decimal? ReactiveEnergyImportDelta,
+    decimal? ReactiveEnergyExportDelta);

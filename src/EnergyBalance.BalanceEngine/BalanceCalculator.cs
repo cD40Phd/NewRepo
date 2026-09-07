@@ -37,11 +37,19 @@ public class BalanceCalculator
 
         decimal supply = 0m;
         decimal consumption = 0m;
+        decimal ownNeeds = 0m;
         var pointsCount = 0;
         var issuesCount = 0;
 
         foreach (var member in members)
         {
+            // Точка, исключённая из баланса ("Исключено" — по аналогии с ПО «Пирамида 2.0"),
+            // не участвует ни в приходе, ни в расходе и не учитывается в статистике полноты данных.
+            if (member.Role == BalanceMemberRole.Excluded)
+            {
+                continue;
+            }
+
             if (!IsActiveDuring(member, periodStartUtc, periodEndUtc))
             {
                 continue;
@@ -69,6 +77,9 @@ public class BalanceCalculator
                 case BalanceMemberRole.Consumption:
                     consumption += value;
                     break;
+                case BalanceMemberRole.OwnNeeds:
+                    ownNeeds += value;
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(member.Role), member.Role, "Неизвестная роль точки учёта в балансовой группе.");
             }
@@ -84,6 +95,7 @@ public class BalanceCalculator
             Version = version,
             SupplyEnergyKwh = Math.Round(supply, 3),
             ConsumptionEnergyKwh = Math.Round(consumption, 3),
+            OwnNeedsEnergyKwh = Math.Round(ownNeeds, 3),
             NormativeLossKwh = normativeLoss,
             MeteringPointsCount = pointsCount,
             MeteringPointsWithIssuesCount = issuesCount,

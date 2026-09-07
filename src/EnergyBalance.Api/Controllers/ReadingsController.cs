@@ -27,6 +27,7 @@ public class ReadingsController : ControllerBase
         return Ok(new ReadingDto(
             reading.TimestampUtc,
             reading.ActiveEnergyTotal,
+            reading.ActiveEnergyExportTotal,
             reading.VoltageA,
             reading.VoltageB,
             reading.VoltageC,
@@ -50,7 +51,7 @@ public class ReadingsController : ControllerBase
 
         var profile = await _readingRepository.GetProfileAsync(meterId, fromUtc, toUtc, ct);
         var dtos = profile
-            .Select(p => new LoadProfilePointDto(p.IntervalStartUtc, p.IntervalMinutes, p.ActiveEnergyDelta, p.Quality.ToString()))
+            .Select(p => new LoadProfilePointDto(p.IntervalStartUtc, p.IntervalMinutes, p.ActiveEnergyDelta, p.ActiveEnergyExportDelta, p.Quality.ToString()))
             .ToList();
 
         return Ok(dtos);

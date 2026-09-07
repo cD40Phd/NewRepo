@@ -34,7 +34,14 @@ public class SiriusModbusClient : IMeterDataSource
         var t2 = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyTariff2Register, ct);
         var t3 = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyTariff3Register, ct);
         var t4 = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyTariff4Register, ct);
-        var reactive = await ReadEnergyAsync(master, slaveAddress, _registerMap.ReactiveEnergyTotalRegister, ct);
+
+        var e1 = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyExportTariff1Register, ct);
+        var e2 = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyExportTariff2Register, ct);
+        var e3 = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyExportTariff3Register, ct);
+        var e4 = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyExportTariff4Register, ct);
+
+        var reactiveImport = await ReadEnergyAsync(master, slaveAddress, _registerMap.ReactiveEnergyImportRegister, ct);
+        var reactiveExport = await ReadEnergyAsync(master, slaveAddress, _registerMap.ReactiveEnergyExportRegister, ct);
 
         var voltageA = await ReadAnalogAsync(master, slaveAddress, _registerMap.VoltageARegister, ct);
         var voltageB = await ReadAnalogAsync(master, slaveAddress, _registerMap.VoltageBRegister, ct);
@@ -54,7 +61,12 @@ public class SiriusModbusClient : IMeterDataSource
             ActiveEnergyTariff2: t2,
             ActiveEnergyTariff3: t3,
             ActiveEnergyTariff4: t4,
-            ReactiveEnergyTotal: reactive,
+            ActiveEnergyExportTariff1: e1,
+            ActiveEnergyExportTariff2: e2,
+            ActiveEnergyExportTariff3: e3,
+            ActiveEnergyExportTariff4: e4,
+            ReactiveEnergyImport: reactiveImport,
+            ReactiveEnergyExport: reactiveExport,
             VoltageA: voltageA,
             VoltageB: voltageB,
             VoltageC: voltageC,
@@ -79,14 +91,24 @@ public class SiriusModbusClient : IMeterDataSource
 
         var result = new List<LoadProfileInterval>();
         var cursor = fromUtc;
-        var previousEnergy = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyTariff1Register, ct);
+        var previousImport = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyTariff1Register, ct);
+        var previousExport = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyExportTariff1Register, ct);
 
         while (cursor < toUtc)
         {
-            var currentEnergy = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyTariff1Register, ct);
-            var delta = currentEnergy - previousEnergy;
-            result.Add(new LoadProfileInterval(cursor, IntervalMinutes: 30, ActiveEnergyDelta: delta, ReactiveEnergyDelta: null));
-            previousEnergy = currentEnergy;
+            var currentImport = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyTariff1Register, ct);
+            var currentExport = await ReadEnergyAsync(master, slaveAddress, _registerMap.ActiveEnergyExportTariff1Register, ct);
+            var importDelta = currentImport - previousImport;
+            var exportDelta = currentExport - previousExport;
+            result.Add(new LoadProfileInterval(
+                cursor,
+                IntervalMinutes: 30,
+                ActiveEnergyDelta: importDelta,
+                ActiveEnergyExportDelta: exportDelta,
+                ReactiveEnergyImportDelta: null,
+                ReactiveEnergyExportDelta: null));
+            previousImport = currentImport;
+            previousExport = currentExport;
             cursor = cursor.AddMinutes(30);
         }
 

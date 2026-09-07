@@ -18,6 +18,12 @@ public class MeteringPointConfiguration : IEntityTypeConfiguration<MeteringPoint
         builder.Property(x => x.VoltageTransformerRatio).HasPrecision(12, 4);
         builder.Ignore(x => x.TransformationRatio);
 
+        builder.Property(x => x.CurrentTransformerAccuracyClass).HasMaxLength(10);
+        builder.Property(x => x.VoltageTransformerAccuracyClass).HasMaxLength(10);
+        builder.Property(x => x.MaxDeclaredPowerKw).HasPrecision(12, 3);
+        builder.Property(x => x.MaxReactivePowerCoefficient).HasPrecision(6, 3);
+        builder.Property(x => x.PowerLimitKw).HasPrecision(12, 3);
+
         builder.HasMany(x => x.Meters)
             .WithOne(m => m.MeteringPoint)
             .HasForeignKey(m => m.MeteringPointId)

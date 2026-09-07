@@ -74,6 +74,7 @@ public class BalanceController : ControllerBase
         r.Version,
         r.SupplyEnergyKwh,
         r.ConsumptionEnergyKwh,
+        r.OwnNeedsEnergyKwh,
         r.NormativeLossKwh,
         r.ActualLossKwh,
         r.ImbalanceKwh,

@@ -16,18 +16,37 @@ public class Reading
     /// <summary>Момент времени снятия показания (UTC).</summary>
     public DateTime TimestampUtc { get; set; }
 
-    /// <summary>Активная энергия, накопительный счёт по тарифу Т1, кВт·ч (в первичных величинах, до умножения на Ктт/Ктн).</summary>
+    /// <summary>Активная энергия «приём» (А+), накопительный счёт по тарифу Т1, кВт·ч (в первичных величинах, до умножения на Ктт/Ктн).</summary>
     public decimal ActiveEnergyTariff1 { get; set; }
     public decimal ActiveEnergyTariff2 { get; set; }
     public decimal ActiveEnergyTariff3 { get; set; }
     public decimal ActiveEnergyTariff4 { get; set; }
 
-    /// <summary>Реактивная энергия, накопительный счёт, кВАр·ч.</summary>
-    public decimal ReactiveEnergyTotal { get; set; }
+    /// <summary>
+    /// Активная энергия «выдача» (А-), накопительный счёт по тарифу Т1, кВт·ч — обязательна для
+    /// точек с возможным двусторонним перетоком (границы с другой сетевой организацией, точки
+    /// с распределённой генерацией). Подтверждено интерфейсом ПО «Пирамида 2.0» (параметр
+    /// «Энергия A-» наравне с «Энергия A+» в разделах «Электроэнергия»/«Профиль»/«Аналитика»).
+    /// Для точек с однонаправленным потреблением равна нулю.
+    /// </summary>
+    public decimal ActiveEnergyExportTariff1 { get; set; }
+    public decimal ActiveEnergyExportTariff2 { get; set; }
+    public decimal ActiveEnergyExportTariff3 { get; set; }
+    public decimal ActiveEnergyExportTariff4 { get; set; }
 
-    /// <summary>Суммарная активная энергия по всем тарифам.</summary>
+    /// <summary>Реактивная энергия «приём» (Р+), накопительный счёт, кВАр·ч.</summary>
+    public decimal ReactiveEnergyImport { get; set; }
+
+    /// <summary>Реактивная энергия «выдача» (Р-), накопительный счёт, кВАр·ч.</summary>
+    public decimal ReactiveEnergyExport { get; set; }
+
+    /// <summary>Суммарная активная энергия «приём» по всем тарифам.</summary>
     public decimal ActiveEnergyTotal =>
         ActiveEnergyTariff1 + ActiveEnergyTariff2 + ActiveEnergyTariff3 + ActiveEnergyTariff4;
+
+    /// <summary>Суммарная активная энергия «выдача» по всем тарифам.</summary>
+    public decimal ActiveEnergyExportTotal =>
+        ActiveEnergyExportTariff1 + ActiveEnergyExportTariff2 + ActiveEnergyExportTariff3 + ActiveEnergyExportTariff4;
 
     /// <summary>Мгновенные значения напряжения по фазам, В.</summary>
     public decimal? VoltageA { get; set; }

@@ -170,4 +170,57 @@ public class BalanceCalculatorTests
         Assert.True(indexOfGrandchild < indexOfChild);
         Assert.True(indexOfChild < indexOfParent);
     }
+
+    [Fact]
+    public void Calculate_OwnNeedsRole_IsExcludedFromLossButCountedInStatistics()
+    {
+        // Сценарий подтверждён интерфейсом «Баланс электроэнергии» ПО «Пирамида 2.0»:
+        // расход на собственные нужды не считается технологической потерей.
+        var group = new BalanceGroup { Id = 1, Name = "ТСЖ", Code = "HOA1", NormativeLossPercent = 0m };
+        var supplyPoint = CreatePoint(1);
+        var consumptionPoint = CreatePoint(2);
+        var ownNeedsPoint = CreatePoint(3);
+        group.Members.Add(CreateMember(group, supplyPoint, BalanceMemberRole.Supply));
+        group.Members.Add(CreateMember(group, consumptionPoint, BalanceMemberRole.Consumption));
+        group.Members.Add(CreateMember(group, ownNeedsPoint, BalanceMemberRole.OwnNeeds));
+
+        var energy = new Dictionary<int, MeteringPointEnergyInput>
+        {
+            [supplyPoint.Id] = new(supplyPoint.Id, 1000m, HasDataIssues: false),
+            [consumptionPoint.Id] = new(consumptionPoint.Id, 950m, HasDataIssues: false),
+            [ownNeedsPoint.Id] = new(ownNeedsPoint.Id, 50m, HasDataIssues: false),
+        };
+
+        var periodStart = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var result = _calculator.Calculate(group, [group], periodStart, periodStart.AddDays(1), version: 1, energyByMeteringPoint: energy);
+
+        Assert.Equal(50m, result.OwnNeedsEnergyKwh);
+        Assert.Equal(0m, result.ActualLossKwh); // 1000 - 950 - 50 = 0
+        Assert.Equal(3, result.MeteringPointsCount);
+    }
+
+    [Fact]
+    public void Calculate_ExcludedRole_DoesNotAffectBalanceOrStatistics()
+    {
+        var group = new BalanceGroup { Id = 1, Name = "Фидер 1", Code = "F1" };
+        var supplyPoint = CreatePoint(1);
+        var excludedPoint = CreatePoint(2);
+        group.Members.Add(CreateMember(group, supplyPoint, BalanceMemberRole.Supply));
+        group.Members.Add(CreateMember(group, excludedPoint, BalanceMemberRole.Excluded));
+
+        var energy = new Dictionary<int, MeteringPointEnergyInput>
+        {
+            [supplyPoint.Id] = new(supplyPoint.Id, 500m, HasDataIssues: false),
+            [excludedPoint.Id] = new(excludedPoint.Id, 999m, HasDataIssues: true),
+        };
+
+        var periodStart = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var result = _calculator.Calculate(group, [group], periodStart, periodStart.AddDays(1), version: 1, energyByMeteringPoint: energy);
+
+        Assert.Equal(500m, result.SupplyEnergyKwh);
+        Assert.Equal(0m, result.ConsumptionEnergyKwh);
+        Assert.Equal(0m, result.OwnNeedsEnergyKwh);
+        Assert.Equal(1, result.MeteringPointsCount);
+        Assert.Equal(0, result.MeteringPointsWithIssuesCount);
+    }
 }

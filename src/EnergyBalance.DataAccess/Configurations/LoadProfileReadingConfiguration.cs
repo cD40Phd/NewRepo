@@ -15,7 +15,9 @@ public class LoadProfileReadingConfiguration : IEntityTypeConfiguration<LoadProf
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.ActiveEnergyDelta).HasPrecision(18, 3);
-        builder.Property(x => x.ReactiveEnergyDelta).HasPrecision(18, 3);
+        builder.Property(x => x.ActiveEnergyExportDelta).HasPrecision(18, 3);
+        builder.Property(x => x.ReactiveEnergyImportDelta).HasPrecision(18, 3);
+        builder.Property(x => x.ReactiveEnergyExportDelta).HasPrecision(18, 3);
 
         builder.HasIndex(x => new { x.MeterId, x.IntervalStartUtc }).IsUnique();
     }

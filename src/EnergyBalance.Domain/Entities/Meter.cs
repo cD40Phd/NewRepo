@@ -18,6 +18,9 @@ public class Meter
     /// <summary>Заводской (серийный) номер прибора.</summary>
     public string SerialNumber { get; set; } = string.Empty;
 
+    /// <summary>Номер поверительной пломбы прибора учёта.</summary>
+    public string? SealNumber { get; set; }
+
     public MeterProtocol Protocol { get; set; }
 
     public CommunicationChannelType ChannelType { get; set; }

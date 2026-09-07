@@ -91,10 +91,15 @@ public class BalanceCalculationOrchestrator
                 continue;
             }
 
-            var sum = profile.Sum(p => p.ActiveEnergyDelta);
+            // Чистая энергия точки учёта = приём (А+) минус выдача (А-) за период. Для подавляющего
+            // большинства однонаправленных точек потребления ActiveEnergyExportDelta равен нулю и
+            // формула сводится к прежней сумме А+; для точек с возможным двусторонним перетоком
+            // (граница с другой сетевой организацией, распределённая генерация) это даёт корректный
+            // нетто-вклад в баланс группы (см. docs/METER_DATA_CONCLUSION.md, параметры «Энергия A+/A-»).
+            var netSum = profile.Sum(p => p.ActiveEnergyDelta - p.ActiveEnergyExportDelta);
             var hasIssues = profile.Any(p => p.Quality != ReadingQuality.Good);
 
-            result[meteringPoint.Id] = new MeteringPointEnergyInput(meteringPoint.Id, sum, hasIssues);
+            result[meteringPoint.Id] = new MeteringPointEnergyInput(meteringPoint.Id, netSum, hasIssues);
         }
 
         return result;

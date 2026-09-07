@@ -13,6 +13,7 @@ public class BalanceCalculationResultConfiguration : IEntityTypeConfiguration<Ba
 
         builder.Property(x => x.SupplyEnergyKwh).HasPrecision(18, 3);
         builder.Property(x => x.ConsumptionEnergyKwh).HasPrecision(18, 3);
+        builder.Property(x => x.OwnNeedsEnergyKwh).HasPrecision(18, 3);
         builder.Property(x => x.NormativeLossKwh).HasPrecision(18, 3);
         builder.Property(x => x.CalculatedBy).HasMaxLength(100);
 

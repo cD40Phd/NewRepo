@@ -20,11 +20,21 @@ public class LoadProfileReading
     /// <summary>Длительность интервала, минут (обычно 30 или 60).</summary>
     public int IntervalMinutes { get; set; }
 
-    /// <summary>Приращение активной энергии за интервал (в первичных величинах), кВт·ч.</summary>
+    /// <summary>Приращение активной энергии «приём» (А+) за интервал (в первичных величинах), кВт·ч.</summary>
     public decimal ActiveEnergyDelta { get; set; }
 
-    /// <summary>Приращение реактивной энергии за интервал, кВАр·ч.</summary>
-    public decimal? ReactiveEnergyDelta { get; set; }
+    /// <summary>
+    /// Приращение активной энергии «выдача» (А-) за интервал — заполняется для точек с
+    /// возможным двусторонним перетоком (см. <see cref="Reading.ActiveEnergyExportTotal"/>),
+    /// для однонаправленных точек потребления равно нулю.
+    /// </summary>
+    public decimal ActiveEnergyExportDelta { get; set; }
+
+    /// <summary>Приращение реактивной энергии «приём» (Р+) за интервал, кВАр·ч.</summary>
+    public decimal? ReactiveEnergyImportDelta { get; set; }
+
+    /// <summary>Приращение реактивной энергии «выдача» (Р-) за интервал, кВАр·ч.</summary>
+    public decimal? ReactiveEnergyExportDelta { get; set; }
 
     public ReadingQuality Quality { get; set; } = ReadingQuality.Good;
 

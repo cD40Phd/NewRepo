@@ -15,7 +15,9 @@ public class ReadingConfiguration : IEntityTypeConfiguration<Reading>
                  {
                      nameof(Reading.ActiveEnergyTariff1), nameof(Reading.ActiveEnergyTariff2),
                      nameof(Reading.ActiveEnergyTariff3), nameof(Reading.ActiveEnergyTariff4),
-                     nameof(Reading.ReactiveEnergyTotal)
+                     nameof(Reading.ActiveEnergyExportTariff1), nameof(Reading.ActiveEnergyExportTariff2),
+                     nameof(Reading.ActiveEnergyExportTariff3), nameof(Reading.ActiveEnergyExportTariff4),
+                     nameof(Reading.ReactiveEnergyImport), nameof(Reading.ReactiveEnergyExport),
                  })
         {
             builder.Property(propertyName).HasPrecision(18, 3);
@@ -31,6 +33,7 @@ public class ReadingConfiguration : IEntityTypeConfiguration<Reading>
         builder.Property(x => x.PowerFactor).HasPrecision(4, 3);
 
         builder.Ignore(x => x.ActiveEnergyTotal);
+        builder.Ignore(x => x.ActiveEnergyExportTotal);
 
         builder.HasIndex(x => new { x.MeterId, x.TimestampUtc }).IsUnique();
     }
