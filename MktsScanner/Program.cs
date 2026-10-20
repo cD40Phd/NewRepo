@@ -62,7 +62,7 @@ foreach (Parity parity in options.Parities)
     BusScanner scanner;
     try
     {
-        scanner = new BusScanner(settings, options.TimeoutMs, options.PauseMs, options.SkipEcho);
+        scanner = new BusScanner(settings, options.TimeoutMs, options.PauseMs, options.SkipEcho, options.DtrRts);
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
     {
@@ -147,11 +147,12 @@ internal sealed class Options
     public int LastAddress { get; private set; } = 247;
     public byte Function { get; private set; } = ModbusRtu.ReadHoldingRegisters;
     public ushort Register { get; private set; }
-    public ushort Count { get; private set; } = 1;
-    public int TimeoutMs { get; private set; } = 200;
+    public ushort Count { get; private set; } = 2;
+    public int TimeoutMs { get; private set; } = 500;
     public int PauseMs { get; private set; } = 20;
     public int Retries { get; private set; } = 1;
     public bool SkipEcho { get; private set; }
+    public bool DtrRts { get; private set; } = true;
     public bool Verbose { get; private set; }
     public string? CsvPath { get; private set; }
     public bool ListPorts { get; private set; }
@@ -177,11 +178,12 @@ internal sealed class Options
           --to <N>            последний адрес (по умолчанию 247)
           --function <N>      функция Modbus: 3, 4 или 17 (0x11, Report Slave ID); по умолчанию 3
           --register <N>      начальный регистр для функций 3/4 (по умолчанию 0)
-          --count <N>         число регистров для функций 3/4 (по умолчанию 1)
-          --timeout <мс>      ожидание ответа (по умолчанию 200)
+          --count <N>         число регистров для функций 3/4 (по умолчанию 2)
+          --timeout <мс>      ожидание ответа (по умолчанию 500; для RealCOM 1000)
           --pause <мс>        пауза перед запросом (по умолчанию 20)
           --retries <N>       повторы для молчащего адреса (по умолчанию 1)
           --echo              отбрасывать эхо собственной передачи (некоторые преобразователи)
+          --no-dtr-rts        не поднимать DTR/RTS (по умолчанию подняты, как нужно RealCOM)
           --verbose           показывать битые кадры
           --csv <файл>        сохранить найденные приборы в CSV
 
@@ -227,6 +229,7 @@ internal sealed class Options
                 case "--pause": o.PauseMs = ParseInt(key, Next(), 0, 10000); break;
                 case "--retries": o.Retries = ParseInt(key, Next(), 0, 10); break;
                 case "--echo": o.SkipEcho = true; break;
+                case "--no-dtr-rts": o.DtrRts = false; break;
                 case "--verbose": case "-v": o.Verbose = true; break;
                 case "--csv": o.CsvPath = Next(); break;
                 default: throw new ArgumentException($"Неизвестный параметр '{args[i]}'.");

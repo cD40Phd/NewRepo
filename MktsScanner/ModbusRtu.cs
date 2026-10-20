@@ -107,7 +107,14 @@ public static class ModbusRtu
         {
             values.Add(((data[i] << 8) | data[i + 1]).ToString());
         }
-        return string.Join(" ", values);
+        string text = string.Join(" ", values);
+        // У МКТС значения хранятся парами регистров (32 бита, старшее слово первым).
+        if (data.Count == 4)
+        {
+            uint value = ((uint)data[0] << 24) | ((uint)data[1] << 16) | ((uint)data[2] << 8) | data[3];
+            text += $" (32 бит: {value})";
+        }
+        return text;
     }
 
     private static string Printable(IList<byte> data)
