@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "Поиск на COM3 (9600 8N1)": {
+      "commandName": "Project",
+      "commandLineArgs": "--port COM3"
+    },
+    "Поиск на COM3 (все скорости)": {
+      "commandName": "Project",
+      "commandLineArgs": "--port COM3 --baud all --parity all --csv mkts.csv"
+    },
+    "Список портов": {
+      "commandName": "Project",
+      "commandLineArgs": "--list"
+    }
+  }
+}
