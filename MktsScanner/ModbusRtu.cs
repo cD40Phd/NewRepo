@@ -112,7 +112,10 @@ public static class ModbusRtu
         if (data.Count == 4)
         {
             uint value = ((uint)data[0] << 24) | ((uint)data[1] << 16) | ((uint)data[2] << 8) | data[3];
-            text += $" (32 бит: {value})";
+            // Порядок слов у МКТС не задокументирован здесь, поэтому показываем float в обоих вариантах.
+            float floatAbcd = BitConverter.ToSingle(BitConverter.GetBytes(value), 0);
+            float floatCdab = BitConverter.ToSingle(BitConverter.GetBytes((value << 16) | (value >> 16)), 0);
+            text += $" (32 бит: {value}; float ABCD: {floatAbcd.ToString("G7", System.Globalization.CultureInfo.InvariantCulture)}; float CDAB: {floatCdab.ToString("G7", System.Globalization.CultureInfo.InvariantCulture)})";
         }
         return text;
     }

@@ -551,16 +551,15 @@ public sealed class MainWindow : Window
 
     private void Log(string text)
     {
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.BeginInvoke(new Action(() => Log(text)));
-            return;
-        }
-
+        // Всегда через очередь диспетчера: иначе строки из фонового поиска,
+        // ещё стоящие в очереди, окажутся в журнале после итоговой строки.
         string stamp = DateTime.Now.ToString("HH:mm:ss.fff");
-        foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
-            _logBox.AppendText($"[{stamp}] {line}{Environment.NewLine}");
-        _logBox.ScrollToEnd();
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
+                _logBox.AppendText($"[{stamp}] {line}{Environment.NewLine}");
+            _logBox.ScrollToEnd();
+        }));
     }
 
     private void SaveCsv()
