@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.IO.Ports;
+using System.Threading;
 
 namespace MktsScanner;
 
@@ -56,7 +59,7 @@ public sealed class BusScanner : IDisposable
         var frame = ReadBytes(3, _answerTimeoutMs);
         if (frame.Count == 3)
         {
-            int? expected = ModbusRtu.ExpectedLength(frame.ToArray(), function);
+            int? expected = ModbusRtu.ExpectedLength(frame, function);
             if (expected is int length)
                 frame.AddRange(ReadBytes(length - 3, _charTimeoutMs));
         }

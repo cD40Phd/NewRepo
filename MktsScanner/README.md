@@ -9,12 +9,28 @@ Modbus: исключение тоже означает, что адрес зан
 
 ## Сборка и запуск
 
+Проект собирается в двух вариантах:
+
+| Папка сборки | Что нужно на компьютере | Когда использовать |
+|---|---|---|
+| `bin\Release\net462\` | .NET Framework 4.6.2 или новее (в Windows 10/11 уже есть) | **основной вариант**, в т.ч. для Windows 7 |
+| `bin\Release\net8.0\` | установленный .NET 8 Runtime, Windows 10+ | если .NET 8 уже стоит |
+
 ```bat
 cd MktsScanner
 dotnet build -c Release
-dotnet run -c Release -- --list
-dotnet run -c Release -- --port COM3
 ```
+
+На прибор/ноутбук копируйте содержимое `bin\Release\net462\` (`MktsScanner.exe` и `MktsScanner.exe.config`):
+
+```bat
+C:\MKTSCom\MktsScanner.exe --list
+C:\MKTSCom\MktsScanner.exe --port COM3 --verbose
+```
+
+Ошибка `You must install .NET to run this application` означает, что запущена сборка `net8.0`
+на компьютере без .NET 8 — возьмите exe из `net462`. На Windows 7 без .NET Framework 4.6.2+
+установите .NET Framework 4.8 (офлайн-установщик с сайта Microsoft).
 
 ## Типовые сценарии
 

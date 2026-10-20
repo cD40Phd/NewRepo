@@ -1,9 +1,16 @@
+using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Threading;
 using System.IO.Ports;
 using System.Text;
 using MktsScanner;
 
+#if NET
 Console.OutputEncoding = Encoding.UTF8;
+#endif
 
 Options options;
 try
@@ -41,7 +48,7 @@ Console.CancelKeyPress += (_, e) =>
     Console.WriteLine("[INFO] Остановка по Ctrl+C, вывожу найденное...");
 };
 
-var found = new List<(SerialSettings Settings, byte Address, ProbeResult Result)>();
+var found = new List<FoundDevice>();
 int garbageCount = 0;
 
 foreach (int baud in options.BaudRates)
@@ -80,7 +87,7 @@ foreach (Parity parity in options.Parities)
             {
                 case ProbeStatus.Answer:
                 case ProbeStatus.Exception:
-                    found.Add((settings, (byte)address, result));
+                    found.Add(new FoundDevice(settings, (byte)address, result));
                     Console.WriteLine($"\r  [НАЙДЕН] адрес {address,3}: {result.Details}");
                     break;
                 case ProbeStatus.Garbage:
@@ -125,6 +132,8 @@ if (options.CsvPath != null)
 }
 
 return found.Count > 0 ? 0 : 3;
+
+internal sealed record FoundDevice(SerialSettings Settings, byte Address, ProbeResult Result);
 
 internal sealed class Options
 {
@@ -232,17 +241,20 @@ internal sealed class Options
     private static int ParseInt(string key, string value, int min, int max)
     {
         bool ok = value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
-            ? int.TryParse(value[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int n)
+            ? int.TryParse(value.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int n)
             : int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out n);
         if (!ok || n < min || n > max)
             throw new ArgumentException($"{key}: ожидалось число от {min} до {max}, получено '{value}'.");
         return n;
     }
 
+    private static IEnumerable<string> SplitList(string value) =>
+        value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Select(v => v.Trim()).Where(v => v.Length > 0);
+
     private static List<int> ParseBaudRates(string value)
     {
         if (value.Equals("all", StringComparison.OrdinalIgnoreCase)) return [.. AllBaudRates];
-        return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        return SplitList(value)
             .Select(v => ParseInt("--baud", v, 300, 921600))
             .ToList();
     }
@@ -250,7 +262,7 @@ internal sealed class Options
     private static List<Parity> ParseParities(string value)
     {
         if (value.Equals("all", StringComparison.OrdinalIgnoreCase)) return [Parity.None, Parity.Even, Parity.Odd];
-        return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        return SplitList(value)
             .Select(v => v.ToLowerInvariant() switch
             {
                 "none" or "n" => Parity.None,
