@@ -212,7 +212,12 @@ public sealed class GameView : FrameworkElement
         DrawText(dc, "ВОЛНА", 13, DimBrush, w - 20, 14, TextAlignment.Right);
         DrawText(dc, g.Wave.ToString(CultureInfo.InvariantCulture), 30, AccentBrush, w - 20, 30, TextAlignment.Right);
 
-        if (g.MaxShields > 1)
+        if (g.Lesson != null)
+        {
+            DrawText(dc, "ЦЕЛЬ: ТОЧНОСТЬ 98–100%", 13, DimBrush, w / 2, 14, TextAlignment.Center);
+            DrawText(dc, "скорость не важна", 15, DimBrush, w / 2, 32, TextAlignment.Center);
+        }
+        else if (g.MaxShields > 1)
         {
             var shields = new string('◆', Math.Max(0, g.Shields)) + new string('◇', Math.Max(0, g.MaxShields - g.Shields));
             DrawText(dc, "ЩИТЫ", 13, DimBrush, w / 2, 14, TextAlignment.Center);
@@ -222,8 +227,21 @@ public sealed class GameView : FrameworkElement
         DrawText(dc, "ЭМИ  [Enter]", 13, DimBrush, 20, h - 52);
         DrawText(dc, g.Emps > 0 ? new string('●', g.Emps) : "—", 20, g.Emps > 0 ? AccentBrush : DimBrush, 20, h - 34);
 
-        DrawText(dc, $"{g.Wpm:0} WPM", 22, TextBrush, w - 20, h - 60, TextAlignment.Right);
-        DrawText(dc, $"точность {g.Accuracy:0.#}%", 14, DimBrush, w - 20, h - 30, TextAlignment.Right);
+        if (g.Lesson != null)
+        {
+            // В уроке главное — точность, скорость вторична
+            var accuracyBrush = g.Accuracy >= LessonCatalog.PassAccuracy ? GreenBrush : TypedBrush;
+            DrawText(dc, $"{g.Accuracy:0.#}%", 26, accuracyBrush, w - 20, h - 64, TextAlignment.Right);
+            DrawText(dc, $"точность · {g.Wpm:0} WPM", 14, DimBrush, w - 20, h - 30, TextAlignment.Right);
+        }
+        else
+        {
+            DrawText(dc, $"{g.Wpm:0} WPM", 22, TextBrush, w - 20, h - 60, TextAlignment.Right);
+            DrawText(dc, $"точность {g.Accuracy:0.#}%", 14, DimBrush, w - 20, h - 30, TextAlignment.Right);
+        }
+
+        if (g.LookingDown)
+            DrawText(dc, "👀 СМОТРИТЕ НА ЭКРАН", 20, TypedBrush, w / 2, h - 175, TextAlignment.Center);
     }
 
     void DrawBanner(DrawingContext dc, GameEngine g, double w, double h)

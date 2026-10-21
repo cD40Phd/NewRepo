@@ -27,8 +27,12 @@ public sealed record GameResult(int Score, int Wave, double Wpm, double Accuracy
     public Lesson? Lesson { get; init; }
     /// <summary>Все волны урока пройдены (корабль цел).</summary>
     public bool Completed { get; init; }
-    /// <summary>0–3 звезды за урок: точность ≥ 90 / 94 / 97 %.</summary>
+    /// <summary>0–3 звезды за урок: точность ≥ 98 / 99 / 100 %.</summary>
     public int Stars { get; init; }
+    /// <summary>Сколько раз камера заметила взгляд на клавиатуру.</summary>
+    public int Peeks { get; init; }
+    /// <summary>Столкновения в уроке (там они не уничтожают корабль).</summary>
+    public int Collisions { get; init; }
 }
 
 /// <summary>
@@ -139,6 +143,10 @@ public sealed class GameEngine
     public double Invulnerable { get; private set; }
     public Banner? Banner { get; private set; }
     public string? Hint { get; private set; }
+    public int Peeks { get; private set; }
+    public int Collisions { get; private set; }
+    /// <summary>Камера видит, что игрок смотрит на клавиатуру.</summary>
+    public bool LookingDown { get; private set; }
     public double HintTime { get; private set; }
 
     public event Action<GameResult>? GameOver;
@@ -149,7 +157,7 @@ public sealed class GameEngine
     public double Accuracy => Keystrokes == 0 ? 100 : 100.0 * Correct / Keystrokes;
     public bool IsRunning => Phase is Phase.Intermission or Phase.Fighting or Phase.Dying or Phase.Finishing;
 
-    double SpeedMultiplier => Difficulty switch { Difficulty.Easy => 0.7, Difficulty.Hard => 1.3, _ => 1.0 } * (_lesson != null ? 0.8 : 1.0);
+    double SpeedMultiplier => Difficulty switch { Difficulty.Easy => 0.7, Difficulty.Hard => 1.3, _ => 1.0 } * (_lesson != null ? 0.6 : 1.0);
     double IntervalMultiplier => Difficulty switch { Difficulty.Easy => 1.35, Difficulty.Hard => 0.8, _ => 1.0 };
     int EmpsPerWave => Difficulty == Difficulty.Easy ? 2 : 1;
     int StartShields => Difficulty switch { Difficulty.Easy => 3, Difficulty.Normal => 2, _ => 1 };
@@ -175,6 +183,8 @@ public sealed class GameEngine
         Phase = Phase.Idle;
         Banner = null;
         Hint = null;
+        Peeks = Collisions = 0;
+        LookingDown = false;
         Score = Wave = Combo = MaxCombo = Emps = Keystrokes = Correct = Misses = WordsDestroyed = 0;
         ActiveTime = Shake = MissFlash = Invulnerable = 0;
         ShipAngle = 0;
@@ -284,6 +294,19 @@ public sealed class GameEngine
         Shake = Math.Max(Shake, 8);
         PlaySound?.Invoke(Sfx.Emp);
         return true;
+    }
+
+    /// <summary>Сигнал от камеры: игрок посмотрел на клавиатуру (или вернул взгляд на экран).</summary>
+    public void SetLookingDown(bool lookingDown)
+    {
+        if (lookingDown == LookingDown)
+            return;
+        LookingDown = lookingDown;
+        if (lookingDown && Phase == Phase.Fighting)
+        {
+            Peeks++;
+            ShowHint("👀 Не смотрите на клавиатуру — смотрите на экран и подсказку!");
+        }
     }
 
     void RegisterMiss(char? expected)
@@ -581,7 +604,9 @@ public sealed class GameEngine
             _phaseTimer = 2.6;
             int stars = StarsFor(Accuracy);
             ShowBanner(stars > 0 ? "УРОК ПРОЙДЕН" : "УРОК ЗАВЕРШЁН",
-                stars > 0 ? new string('★', stars) + new string('☆', 3 - stars) : $"нужна точность от {LessonCatalog.PassAccuracy:0}%",
+                stars > 0
+                    ? new string('★', stars) + new string('☆', 3 - stars) + $"   точность {Accuracy:0.#}%"
+                    : $"точность {Accuracy:0.#}% — нужно {LessonCatalog.PassAccuracy:0}–100%",
                 2.6, stars > 0 ? GreenColor : OrangeColor);
             PlaySound?.Invoke(Sfx.WaveClear);
             return;
@@ -729,6 +754,19 @@ public sealed class GameEngine
         if (Invulnerable > 0 || Phase != Phase.Fighting)
             return;
 
+        if (_lesson != null)
+        {
+            // В уроке скорость не важна: столкновение не уничтожает корабль
+            Collisions++;
+            Combo = 0;
+            Shake = 12;
+            Invulnerable = 1.0;
+            Repel(Ship, 280, 520);
+            ShowHint("Столкновение! Не спешите — главное точность");
+            PlaySound?.Invoke(Sfx.ShipHit);
+            return;
+        }
+
         Shields--;
         Combo = 0;
         Shake = 22;
@@ -813,8 +851,8 @@ public sealed class GameEngine
 
     static int StarsFor(double accuracy) => accuracy switch
     {
-        >= 97 => 3,
-        >= 94 => 2,
+        >= 99.95 => 3,
+        >= 99 => 2,
         >= LessonCatalog.PassAccuracy => 1,
         _ => 0,
     };
@@ -830,6 +868,8 @@ public sealed class GameEngine
             Lesson = _lesson?.Lesson,
             Completed = completed,
             Stars = completed ? StarsFor(Accuracy) : 0,
+            Peeks = Peeks,
+            Collisions = Collisions,
         };
     }
 }

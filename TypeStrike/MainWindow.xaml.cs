@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Microsoft.Win32;
+using TypeStrike.Camera;
 using TypeStrike.Game;
 
 namespace TypeStrike;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     RadioButton _lastLanguage;
     DateTime _gameOverShownAt;
     LessonPlan? _currentPlan;
+    GazeTracker? _gaze;
 
     public MainWindow()
     {
@@ -47,6 +49,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             CompositionTarget.Rendering -= OnFrame;
+            StopCamera();
             _sound.Dispose();
         };
 
@@ -93,6 +96,10 @@ public partial class MainWindow : Window
                         break;
                     case Key.Back:
                         _engine.ReleaseTarget();
+                        e.Handled = true;
+                        break;
+                    case Key.F5:
+                        _gaze?.Recalibrate();
                         e.Handled = true;
                         break;
                     case Key.Space:
@@ -153,6 +160,10 @@ public partial class MainWindow : Window
         _engine.Start(bank, difficulty, _currentPlan);
 
         Hints.Visibility = HintsBox.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (CameraBox.IsChecked == true)
+            StartCamera();
+        else
+            StopCamera();
         MenuPanel.Visibility = Visibility.Collapsed;
         PausePanel.Visibility = Visibility.Collapsed;
         GameOverPanel.Visibility = Visibility.Collapsed;
@@ -176,6 +187,7 @@ public partial class MainWindow : Window
     void ShowMenu()
     {
         _engine.Reset();
+        StopCamera();
         Hints.Visibility = Visibility.Collapsed;
         PausePanel.Visibility = Visibility.Collapsed;
         GameOverPanel.Visibility = Visibility.Collapsed;
@@ -188,20 +200,35 @@ public partial class MainWindow : Window
     {
         bool record = _scores.Submit(ScoreKey(_engine.Words, _engine.Difficulty), result);
         NewRecordText.Visibility = record ? Visibility.Visible : Visibility.Collapsed;
-        ShowLessonOutcome(result);
+        string lessonMessage = ShowLessonOutcome(result);
 
         StatsGrid.Children.Clear();
         StatsGrid.RowDefinitions.Clear();
-        AddStat("Счёт", result.Score.ToString("N0", CultureInfo.CurrentCulture), "#FF9F1C");
-        AddStat("Волна", result.Wave.ToString(CultureInfo.InvariantCulture));
-        AddStat("Скорость", $"{result.Wpm:0} WPM  ({result.Wpm * 5:0} зн/мин)");
-        AddStat("Точность", $"{result.Accuracy:0.#}%");
-        AddStat("Макс. комбо", result.MaxCombo.ToString(CultureInfo.InvariantCulture));
-        AddStat("Сбито кораблей", result.Words.ToString(CultureInfo.InvariantCulture));
+        if (result.Lesson != null)
+        {
+            // В уроке главное — точность; скорость показываем, но не оцениваем
+            AddStat("Точность", $"{result.Accuracy:0.#}%  (нужно {LessonCatalog.PassAccuracy:0}–100%)",
+                result.Accuracy >= LessonCatalog.PassAccuracy ? "#6BFFB0" : "#FF9F1C");
+            AddStat("Скорость", $"{result.Wpm:0} WPM  ({result.Wpm * 5:0} зн/мин)");
+            AddStat("Столкновения", result.Collisions.ToString(CultureInfo.InvariantCulture));
+        }
+        else
+        {
+            AddStat("Счёт", result.Score.ToString("N0", CultureInfo.CurrentCulture), "#FF9F1C");
+            AddStat("Волна", result.Wave.ToString(CultureInfo.InvariantCulture));
+            AddStat("Скорость", $"{result.Wpm:0} WPM  ({result.Wpm * 5:0} зн/мин)");
+            AddStat("Точность", $"{result.Accuracy:0.#}%");
+            AddStat("Макс. комбо", result.MaxCombo.ToString(CultureInfo.InvariantCulture));
+            AddStat("Сбито кораблей", result.Words.ToString(CultureInfo.InvariantCulture));
+        }
+        if (_gaze != null)
+            AddStat("Взгляд на клавиатуру", result.Peeks == 0 ? "ни разу 👍" : $"{result.Peeks} раз",
+                result.Peeks == 0 ? "#6BFFB0" : "#FF9F1C");
 
-        TroubleText.Text = (string.IsNullOrEmpty(result.TroubleLetters)
-            ? "Ни одной ошибки — отличная работа!"
-            : "Чаще всего ошибались на буквах:\n" + result.TroubleLetters)
+        TroubleText.Text = lessonMessage
+            + (string.IsNullOrEmpty(result.TroubleLetters)
+                ? "Ни одной ошибки — отличная работа!"
+                : "Чаще всего ошибались на буквах:\n" + result.TroubleLetters)
             + (result.Lesson != null ? "\n\nСовет: " + LessonCatalog.Tips[Random.Shared.Next(LessonCatalog.Tips.Length)] : "");
 
         GameOverPanel.Visibility = Visibility.Visible;
@@ -209,41 +236,74 @@ public partial class MainWindow : Window
         _gameOverShownAt = DateTime.Now;
     }
 
-    void ShowLessonOutcome(GameResult result)
+    /// <summary>Заголовок, звёзды и прогресс освоения урока. Возвращает пояснение для итогов.</summary>
+    string ShowLessonOutcome(GameResult result)
     {
-        bool lesson = result.Lesson != null && _currentPlan != null;
-        bool passed = lesson && result.Completed && result.Stars > 0;
+        NextLessonButton.Visibility = Visibility.Collapsed;
+        ResultStars.Visibility = Visibility.Collapsed;
 
-        if (!lesson)
+        if (result.Lesson == null || _currentPlan == null)
         {
-            GameOverTitle.Text = "КОРАБЛЬ УНИЧТОЖЕН";
-            GameOverTitle.Foreground = (Brush)new BrushConverter().ConvertFromString("#FF4D6D")!;
-        }
-        else if (passed)
-        {
-            GameOverTitle.Text = "УРОК ПРОЙДЕН";
-            GameOverTitle.Foreground = (Brush)new BrushConverter().ConvertFromString("#6BFFB0")!;
-        }
-        else
-        {
-            GameOverTitle.Text = result.Completed ? "НУЖНО ТОЧНЕЕ" : "КОРАБЛЬ УНИЧТОЖЕН";
-            GameOverTitle.Foreground = (Brush)new BrushConverter().ConvertFromString(result.Completed ? "#FF9F1C" : "#FF4D6D")!;
+            SetTitle("КОРАБЛЬ УНИЧТОЖЕН", "#FF4D6D");
+            RestartButton.Content = "ИГРАТЬ СНОВА  [Enter]";
+            return "";
         }
 
-        ResultStars.Visibility = lesson ? Visibility.Visible : Visibility.Collapsed;
+        var bank = SelectedBank();
+        var lessons = LessonCatalog.For(bank);
+        bool passed = result.Completed && result.Stars > 0;
+        bool wasMastered = _scores.IsMastered(_currentPlan.Key);
+        var mastery = _scores.AddAttempt(_currentPlan.Key, new LessonAttempt
+        {
+            Accuracy = result.Accuracy,
+            Wpm = result.Wpm,
+            Completed = result.Completed,
+            Date = DateTime.Now,
+        });
+        if (passed)
+            _scores.SubmitStars(_currentPlan.Key, result.Stars);
+
+        ResultStars.Visibility = Visibility.Visible;
         ResultStars.Text = new string('★', result.Stars) + new string('☆', 3 - result.Stars);
 
-        var lessons = LessonCatalog.For(SelectedBank());
-        bool hasNext = passed && result.Lesson!.Number < lessons.Count;
+        bool hasNext = mastery.Mastered && result.Lesson.Number < lessons.Count;
+        if (hasNext && !wasMastered)
+            _scores.SetCurrentLesson(bank.Id, result.Lesson.Number);
         NextLessonButton.Visibility = hasNext ? Visibility.Visible : Visibility.Collapsed;
-        RestartButton.Content = lesson ? "ПОВТОРИТЬ УРОК" + (hasNext ? "" : "  [Enter]") : "ИГРАТЬ СНОВА  [Enter]";
+        RestartButton.Content = "ПОВТОРИТЬ УРОК" + (hasNext ? "" : "  [Enter]");
 
+        int need = LessonCatalog.MasteryStreak;
+        string progress = $"Освоение: {Dots(mastery.Streak)}  ({Math.Min(mastery.Streak, need)} из {need} зачётов подряд)";
+
+        if (mastery.Mastered && !wasMastered)
+        {
+            SetTitle("УРОК ОСВОЕН", "#6BFFB0");
+            return progress + (hasNext ? "\nПальцы запомнили зоны — открыта следующая буква!\n\n" : "\nВсе буквы изучены — переходите к свободной игре!\n\n");
+        }
         if (passed)
         {
-            _scores.SubmitStars(_currentPlan!.Key, result.Stars);
-            if (hasNext)
-                _scores.SetCurrentLesson(SelectedBank().Id, result.Lesson!.Number);
+            SetTitle("ЗАЧЁТ", "#6BFFB0");
+            string next = mastery.Mastered
+                ? "Урок уже освоен — можно идти дальше или закреплять."
+                : mastery.Streak >= need && !mastery.StableSpeed
+                    ? "Точность отличная, но скорость пока скачет — печатайте ровно, в одном ритме."
+                    : $"Ещё {need - mastery.Streak} стабильн. результат(а) — и добавится новая буква.";
+            return progress + "\n" + next + "\n\n";
         }
+
+        SetTitle(result.Completed ? "НУЖНО ТОЧНЕЕ" : "КОРАБЛЬ УНИЧТОЖЕН", "#FF9F1C");
+        return progress + $"\nТочность {result.Accuracy:0.#}% — нужно {LessonCatalog.PassAccuracy:0}–100%. " +
+               "Не спешите: скорость придёт сама, когда пальцы запомнят свои зоны.\n\n";
+    }
+
+    static string Dots(int streak) =>
+        new string('●', Math.Min(streak, LessonCatalog.MasteryStreak)) +
+        new string('○', Math.Max(0, LessonCatalog.MasteryStreak - streak));
+
+    void SetTitle(string text, string color)
+    {
+        GameOverTitle.Text = text;
+        GameOverTitle.Foreground = (Brush)new BrushConverter().ConvertFromString(color)!;
     }
 
     void StartNextLesson()
@@ -284,6 +344,65 @@ public partial class MainWindow : Window
         StatsGrid.Children.Add(number);
     }
 
+    // ───────────────────────────── Камера ─────────────────────────────
+
+    void StartCamera()
+    {
+        if (_gaze == null)
+        {
+            var tracker = new GazeTracker(Dispatcher);
+            // События уже остановленного трекера могут прийти позже — игнорируем их
+            tracker.StateChanged += state =>
+            {
+                if (_gaze == tracker)
+                    OnGazeStateChanged(state);
+            };
+            tracker.Preview += bitmap =>
+            {
+                if (_gaze == tracker)
+                    CameraImage.Source = bitmap;
+            };
+            _gaze = tracker;
+            tracker.Start();
+            OnGazeStateChanged(GazeState.Starting);
+        }
+        else
+        {
+            // Калибруемся заново в начале каждой игры, пока висит баннер «Приготовьтесь»
+            _gaze.Recalibrate();
+        }
+        CameraPanel.Visibility = Visibility.Visible;
+    }
+
+    void StopCamera()
+    {
+        _gaze?.Dispose();
+        _gaze = null;
+        _engine.SetLookingDown(false);
+        CameraImage.Source = null;
+        CameraPanel.Visibility = Visibility.Collapsed;
+    }
+
+    void OnGazeStateChanged(GazeState state)
+    {
+        CameraStatus.Text = state switch
+        {
+            GazeState.Starting => "Включаю камеру…",
+            GazeState.Calibrating => "Калибровка: смотрите на экран",
+            GazeState.OnScreen => "✔ Взгляд на экране",
+            GazeState.LookingDown => "👀 Взгляд на клавиатуре!",
+            GazeState.NoFace => "Лицо не в кадре",
+            _ => "Камера недоступна: " + _gaze?.ErrorMessage,
+        };
+        CameraStatus.Foreground = (Brush)new BrushConverter().ConvertFromString(state switch
+        {
+            GazeState.OnScreen => "#6BFFB0",
+            GazeState.LookingDown or GazeState.Error => "#FF9F1C",
+            _ => "#C8D3EA",
+        })!;
+        _engine.SetLookingDown(state == GazeState.LookingDown);
+    }
+
     // ───────────────────────────── Меню ─────────────────────────────
 
     void Start_Click(object sender, RoutedEventArgs e) => StartGame();
@@ -301,9 +420,19 @@ public partial class MainWindow : Window
         var lessons = LessonCatalog.For(bank);
         if (lessons.Count == 0)
             return;
-        int index = Math.Clamp(_scores.GetCurrentLesson(bank.Id) + delta, 0, lessons.Count - 1);
+        // Новая буква открывается только после освоения предыдущего урока
+        int index = Math.Clamp(_scores.GetCurrentLesson(bank.Id) + delta, 0, UnlockedLessons(bank, lessons) - 1);
         _scores.SetCurrentLesson(bank.Id, index);
         UpdateMenuInfo();
+    }
+
+    /// <summary>Сколько уроков открыто: все освоенные подряд плюс первый неосвоенный.</summary>
+    int UnlockedLessons(WordBank bank, IReadOnlyList<Lesson> lessons)
+    {
+        int unlocked = 1;
+        while (unlocked < lessons.Count && _scores.IsMastered($"{bank.Id}-lesson{lessons[unlocked - 1].Number}"))
+            unlocked++;
+        return unlocked;
     }
 
     /// <summary>Выбранный урок или null, если включена свободная игра (или свой файл слов).</summary>
@@ -315,7 +444,7 @@ public partial class MainWindow : Window
         var lessons = LessonCatalog.For(bank);
         if (lessons.Count == 0)
             return null;
-        return lessons[Math.Clamp(_scores.GetCurrentLesson(bank.Id), 0, lessons.Count - 1)];
+        return lessons[Math.Clamp(_scores.GetCurrentLesson(bank.Id), 0, UnlockedLessons(bank, lessons) - 1)];
     }
 
     void Lang_Click(object sender, RoutedEventArgs e)
@@ -372,11 +501,14 @@ public partial class MainWindow : Window
         {
             var bank = SelectedBank();
             var lessons = LessonCatalog.For(bank);
-            int stars = _scores.StarsFor($"{bank.Id}-lesson{lesson.Number}");
-            int passed = lessons.Count(l => _scores.StarsFor($"{bank.Id}-lesson{l.Number}") > 0);
+            string key = $"{bank.Id}-lesson{lesson.Number}";
+            int stars = _scores.StarsFor(key);
+            var mastery = _scores.GetMastery(key);
+            int mastered = lessons.Count(l => _scores.IsMastered($"{bank.Id}-lesson{l.Number}"));
             LessonTitle.Text = $"{lesson.Title}   ({lesson.Number}/{lessons.Count})";
-            LessonLetters.Text = $"изученные буквы: {lesson.Letters.ToUpperInvariant()}  ·  пройдено уроков: {passed}";
-            LessonStars.Text = new string('★', stars) + new string('☆', 3 - stars);
+            LessonLetters.Text = $"изученные буквы: {lesson.Letters.ToUpperInvariant()}  ·  освоено уроков: {mastered}";
+            LessonStars.Text = new string('★', stars) + new string('☆', 3 - stars) + "    " +
+                (mastery.Mastered ? "освоен ✔" : $"освоение {Dots(mastery.Streak)}");
             LessonTip.Text = "💡 " + lesson.Tip;
         }
 

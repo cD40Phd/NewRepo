@@ -13,6 +13,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="OpenCvSharp4.Windows" Version="4.11.0.20250507" />
+    <PackageReference Include="OpenCvSharp4.WpfExtensions" Version="4.11.0.20250507" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Каскады Хаара из OpenCV для поиска лица и глаз (лицензия — в заголовках файлов) -->
+    <None Update="Camera\*.xml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Words\en.txt" LogicalName="Words.en.txt" />
     <EmbeddedResource Include="Words\ru.txt" LogicalName="Words.ru.txt" />
   </ItemGroup>
