@@ -14,12 +14,22 @@ public enum Phase
     Fighting,
     /// <summary>Корабль взорван, ждём экран итогов.</summary>
     Dying,
+    /// <summary>Урок пройден, ждём экран итогов.</summary>
+    Finishing,
     Over,
 }
 
 public enum Sfx { Shoot, Hit, Explode, BigExplode, Miss, Emp, WaveClear, ShipHit, GameOver }
 
-public sealed record GameResult(int Score, int Wave, double Wpm, double Accuracy, int MaxCombo, int Words, string TroubleLetters);
+public sealed record GameResult(int Score, int Wave, double Wpm, double Accuracy, int MaxCombo, int Words, string TroubleLetters)
+{
+    /// <summary>Урок, если играли в режиме уроков.</summary>
+    public Lesson? Lesson { get; init; }
+    /// <summary>Все волны урока пройдены (корабль цел).</summary>
+    public bool Completed { get; init; }
+    /// <summary>0–3 звезды за урок: точность ≥ 90 / 94 / 97 %.</summary>
+    public int Stars { get; init; }
+}
 
 /// <summary>
 /// Вся игровая логика: волны, враги, прицеливание по первой букве, пули, ЭМИ, очки.
@@ -46,6 +56,7 @@ public sealed class GameEngine
     int _waveMisses;
     Enemy? _aim;
     WordBank _words = WordBank.English;
+    LessonPlan? _lesson;
 
     public GameEngine()
     {
@@ -77,6 +88,38 @@ public sealed class GameEngine
     public Phase Phase { get; private set; } = Phase.Idle;
     public Difficulty Difficulty { get; private set; } = Difficulty.Normal;
     public WordBank Words => _words;
+    public LessonPlan? Lesson => _lesson;
+
+    /// <summary>
+    /// Враг, слово которого стоит печатать сейчас: текущая цель или ближайший к кораблю.
+    /// Используется подсказкой клавиатуры.
+    /// </summary>
+    public Enemy? HintEnemy
+    {
+        get
+        {
+            if (Phase != Phase.Fighting)
+                return null;
+            if (Target is { CanBeTargeted: true })
+                return Target;
+
+            var ship = Ship;
+            Enemy? best = null;
+            double bestDistance = double.MaxValue;
+            foreach (var e in Enemies)
+            {
+                if (!e.CanBeTargeted || e.Pos.Y <= -e.Radius * 0.5)
+                    continue;
+                double d = (e.Pos - ship).LengthSquared;
+                if (d < bestDistance)
+                {
+                    bestDistance = d;
+                    best = e;
+                }
+            }
+            return best;
+        }
+    }
 
     public int Score { get; private set; }
     public int Wave { get; private set; }
@@ -104,9 +147,9 @@ public sealed class GameEngine
     public int Multiplier => 1 + Math.Min(Combo / 20, 4);
     public double Wpm => ActiveTime < 1 ? 0 : Correct / 5.0 / (ActiveTime / 60.0);
     public double Accuracy => Keystrokes == 0 ? 100 : 100.0 * Correct / Keystrokes;
-    public bool IsRunning => Phase is Phase.Intermission or Phase.Fighting or Phase.Dying;
+    public bool IsRunning => Phase is Phase.Intermission or Phase.Fighting or Phase.Dying or Phase.Finishing;
 
-    double SpeedMultiplier => Difficulty switch { Difficulty.Easy => 0.7, Difficulty.Hard => 1.3, _ => 1.0 };
+    double SpeedMultiplier => Difficulty switch { Difficulty.Easy => 0.7, Difficulty.Hard => 1.3, _ => 1.0 } * (_lesson != null ? 0.8 : 1.0);
     double IntervalMultiplier => Difficulty switch { Difficulty.Easy => 1.35, Difficulty.Hard => 0.8, _ => 1.0 };
     int EmpsPerWave => Difficulty == Difficulty.Easy ? 2 : 1;
     int StartShields => Difficulty switch { Difficulty.Easy => 3, Difficulty.Normal => 2, _ => 1 };
@@ -126,6 +169,7 @@ public sealed class GameEngine
         Rings.Clear();
         _spawnQueue.Clear();
         _missedLetters.Clear();
+        _lesson = null;
         Target = null;
         _aim = null;
         Phase = Phase.Idle;
@@ -136,15 +180,25 @@ public sealed class GameEngine
         ShipAngle = 0;
     }
 
-    public void Start(WordBank words, Difficulty difficulty)
+    public void Start(WordBank words, Difficulty difficulty, LessonPlan? lesson = null)
     {
         Reset();
-        _words = words;
+        _lesson = lesson;
+        _words = lesson?.Words ?? words;
         Difficulty = difficulty;
         Shields = MaxShields = StartShields;
         Phase = Phase.Intermission;
-        _phaseTimer = 1.8;
-        ShowBanner("ПРИГОТОВЬТЕСЬ", "первая буква слова захватывает цель", 1.8, CyanColor);
+
+        if (lesson != null)
+        {
+            _phaseTimer = 3.5;
+            ShowBanner(lesson.Lesson.Title.ToUpperInvariant(), lesson.Lesson.Tip, 3.5, CyanColor);
+        }
+        else
+        {
+            _phaseTimer = 1.8;
+            ShowBanner("ПРИГОТОВЬТЕСЬ", "первая буква слова захватывает цель", 1.8, CyanColor);
+        }
     }
 
     // ───────────────────────────── Ввод ─────────────────────────────
@@ -295,11 +349,13 @@ public sealed class GameEngine
                 UpdateSpawning(dt);
                 break;
             case Phase.Dying:
+            case Phase.Finishing:
                 _phaseTimer -= dt;
                 if (_phaseTimer <= 0)
                 {
+                    bool completed = Phase == Phase.Finishing;
                     Phase = Phase.Over;
-                    GameOver?.Invoke(BuildResult());
+                    GameOver?.Invoke(BuildResult(completed));
                 }
                 break;
         }
@@ -477,20 +533,34 @@ public sealed class GameEngine
     {
         _spawnQueue.Clear();
         var kinds = new List<EnemyKind>();
+        if (_lesson != null)
+        {
+            // Урок: без носителей и флагманов, чтобы ничто не отвлекало от отработки букв
+            kinds.AddRange(Enumerable.Repeat(EnemyKind.Drone, 4 + Wave * 2));
+            if (Wave >= 3)
+                kinds.AddRange(Enumerable.Repeat(EnemyKind.Dart, Wave));
+            EnqueueWave(kinds);
+            return;
+        }
+
         int drones = Math.Min(3 + Wave * 2, 24);
         int darts = Wave >= 2 ? Math.Min(Wave - 1, 10) : 0;
         int carriers = Wave >= 3 ? Math.Min(1 + (Wave - 3) / 3, 4) : 0;
         kinds.AddRange(Enumerable.Repeat(EnemyKind.Drone, drones));
         kinds.AddRange(Enumerable.Repeat(EnemyKind.Dart, darts));
         kinds.AddRange(Enumerable.Repeat(EnemyKind.Carrier, carriers));
+        if (Wave % 5 == 0)
+            kinds.Insert(kinds.Count / 2, EnemyKind.Boss);
+        EnqueueWave(kinds);
+    }
 
+    void EnqueueWave(List<EnemyKind> kinds)
+    {
         for (int i = kinds.Count - 1; i > 0; i--)
         {
             int j = _rng.Next(i + 1);
             (kinds[i], kinds[j]) = (kinds[j], kinds[i]);
         }
-        if (Wave % 5 == 0)
-            kinds.Insert(kinds.Count / 2, EnemyKind.Boss);
 
         double interval = Math.Max(0.55, 2.1 - Wave * 0.1) * IntervalMultiplier;
         for (int i = 0; i < kinds.Count; i++)
@@ -505,6 +575,18 @@ public sealed class GameEngine
 
     void WaveCleared()
     {
+        if (_lesson != null && Wave >= _lesson.Waves)
+        {
+            Phase = Phase.Finishing;
+            _phaseTimer = 2.6;
+            int stars = StarsFor(Accuracy);
+            ShowBanner(stars > 0 ? "УРОК ПРОЙДЕН" : "УРОК ЗАВЕРШЁН",
+                stars > 0 ? new string('★', stars) + new string('☆', 3 - stars) : $"нужна точность от {LessonCatalog.PassAccuracy:0}%",
+                2.6, stars > 0 ? GreenColor : OrangeColor);
+            PlaySound?.Invoke(Sfx.WaveClear);
+            return;
+        }
+
         Phase = Phase.Intermission;
         _phaseTimer = 3.0;
 
@@ -565,6 +647,8 @@ public sealed class GameEngine
 
     string PickWord(int min, int max)
     {
+        // В уроке первая волна — упражнения на новые буквы, дальше слова
+        var bank = _lesson != null && Wave <= 1 ? _lesson.Drills : _words;
         var letters = new HashSet<char>();
         var words = new HashSet<string>();
         foreach (var e in Enemies)
@@ -574,7 +658,7 @@ public sealed class GameEngine
             letters.Add(TextUtil.Norm(e.Word[e.Typed]));
             words.Add(e.Word);
         }
-        return _words.Pick(min, max, letters, words, _rng);
+        return bank.Pick(min, max, letters, words, _rng);
     }
 
     // ───────────────────────────── Попадания ─────────────────────────────
@@ -727,12 +811,25 @@ public sealed class GameEngine
         return new Vector(v.X * cos - v.Y * sin, v.X * sin + v.Y * cos);
     }
 
-    GameResult BuildResult()
+    static int StarsFor(double accuracy) => accuracy switch
+    {
+        >= 97 => 3,
+        >= 94 => 2,
+        >= LessonCatalog.PassAccuracy => 1,
+        _ => 0,
+    };
+
+    GameResult BuildResult(bool completed)
     {
         var trouble = string.Join("   ", _missedLetters
             .OrderByDescending(kv => kv.Value)
             .Take(6)
             .Select(kv => $"{kv.Key} ×{kv.Value}"));
-        return new GameResult(Score, Wave, Wpm, Accuracy, MaxCombo, WordsDestroyed, trouble);
+        return new GameResult(Score, Wave, Wpm, Accuracy, MaxCombo, WordsDestroyed, trouble)
+        {
+            Lesson = _lesson?.Lesson,
+            Completed = completed,
+            Stars = completed ? StarsFor(Accuracy) : 0,
+        };
     }
 }

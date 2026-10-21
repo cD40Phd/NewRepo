@@ -20,11 +20,13 @@ public sealed class WordBank
     public string? KeyboardCulture { get; }
     public HashSet<char> Alphabet { get; } = new();
     public int Count { get; }
+    public bool IsCyrillic => Alphabet.Any(c => c is >= 'а' and <= 'я');
+    public IEnumerable<string> AllWords => _byLength.Values.SelectMany(list => list);
 
     public static WordBank English => _english ??= FromResource("Words.en.txt", "en", "English", "en-US");
     public static WordBank Russian => _russian ??= FromResource("Words.ru.txt", "ru", "Русский", "ru-RU");
 
-    WordBank(string id, string name, string? keyboardCulture, IEnumerable<string> words)
+    WordBank(string id, string name, string? keyboardCulture, IEnumerable<string> words, IEnumerable<char>? alphabet = null)
     {
         Id = id;
         Name = name;
@@ -42,6 +44,8 @@ public sealed class WordBank
 
         if (Count == 0)
             throw new InvalidDataException("В списке нет ни одного подходящего слова.");
+        if (alphabet != null)
+            Alphabet.UnionWith(alphabet);
 
         _minLength = _byLength.Keys.Min();
         _maxLength = _byLength.Keys.Max();
@@ -54,6 +58,14 @@ public sealed class WordBank
             .Select(w => w.ToLowerInvariant());
         return new WordBank(id, name, keyboardCulture, words);
     }
+
+    /// <summary>
+    /// Набор из готовых слов. <paramref name="alphabet"/> расширяет «свои» буквы —
+    /// нужно урокам, чтобы буквы вне урока не считались чужой раскладкой.
+    /// </summary>
+    public static WordBank FromWords(IEnumerable<string> words, string id, string name, string? keyboardCulture,
+        IEnumerable<char>? alphabet = null) =>
+        new(id, name, keyboardCulture, words, alphabet);
 
     public static WordBank FromFile(string path)
     {

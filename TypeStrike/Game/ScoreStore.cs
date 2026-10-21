@@ -19,6 +19,10 @@ public sealed class ScoreStore
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TypeStrike", "scores.json");
 
     public Dictionary<string, BestScore> Best { get; set; } = new();
+    /// <summary>Лучшее количество звёзд за урок (ключ — LessonPlan.Key).</summary>
+    public Dictionary<string, int> LessonStars { get; set; } = new();
+    /// <summary>Выбранный урок для каждого набора слов (индекс с нуля).</summary>
+    public Dictionary<string, int> CurrentLesson { get; set; } = new();
 
     public static ScoreStore Load()
     {
@@ -52,6 +56,25 @@ public sealed class ScoreStore
         };
         Save();
         return result.Score > 0;
+    }
+
+    public int StarsFor(string lessonKey) => LessonStars.GetValueOrDefault(lessonKey);
+
+    public void SubmitStars(string lessonKey, int stars)
+    {
+        if (stars > StarsFor(lessonKey))
+        {
+            LessonStars[lessonKey] = stars;
+            Save();
+        }
+    }
+
+    public int GetCurrentLesson(string bankId) => CurrentLesson.GetValueOrDefault(bankId);
+
+    public void SetCurrentLesson(string bankId, int index)
+    {
+        CurrentLesson[bankId] = index;
+        Save();
     }
 
     void Save()

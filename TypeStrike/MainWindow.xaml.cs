@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     WordBank? _customBank;
     RadioButton _lastLanguage;
     DateTime _gameOverShownAt;
+    LessonPlan? _currentPlan;
 
     public MainWindow()
     {
@@ -30,6 +31,7 @@ public partial class MainWindow : Window
         _lastLanguage = LangEn;
 
         View.Engine = _engine;
+        Hints.Engine = _engine;
         _engine.PlaySound = _sound.Play;
         _engine.GameOver += OnGameOver;
 
@@ -60,6 +62,8 @@ public partial class MainWindow : Window
         if (_screen != Screen.Paused)
             _engine.Update(dt);
         View.InvalidateVisual();
+        if (Hints.Visibility == Visibility.Visible)
+            Hints.InvalidateVisual();
     }
 
     // ───────────────────────────── Клавиатура ─────────────────────────────
@@ -112,7 +116,12 @@ public partial class MainWindow : Window
                 if ((DateTime.Now - _gameOverShownAt).TotalSeconds < 0.8)
                     break;
                 if (e.Key == Key.Enter)
-                    StartGame();
+                {
+                    if (NextLessonButton.Visibility == Visibility.Visible)
+                        StartNextLesson();
+                    else
+                        StartGame();
+                }
                 else if (e.Key == Key.Escape)
                     ShowMenu();
                 break;
@@ -139,7 +148,11 @@ public partial class MainWindow : Window
         _sound.Enabled = SoundBox.IsChecked == true;
         TrySwitchKeyboardLayout(bank.KeyboardCulture);
 
-        _engine.Start(bank, difficulty);
+        var lesson = SelectedLesson();
+        _currentPlan = lesson != null ? LessonCatalog.CreatePlan(bank, lesson) : null;
+        _engine.Start(bank, difficulty, _currentPlan);
+
+        Hints.Visibility = HintsBox.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         MenuPanel.Visibility = Visibility.Collapsed;
         PausePanel.Visibility = Visibility.Collapsed;
         GameOverPanel.Visibility = Visibility.Collapsed;
@@ -163,6 +176,7 @@ public partial class MainWindow : Window
     void ShowMenu()
     {
         _engine.Reset();
+        Hints.Visibility = Visibility.Collapsed;
         PausePanel.Visibility = Visibility.Collapsed;
         GameOverPanel.Visibility = Visibility.Collapsed;
         MenuPanel.Visibility = Visibility.Visible;
@@ -174,6 +188,7 @@ public partial class MainWindow : Window
     {
         bool record = _scores.Submit(ScoreKey(_engine.Words, _engine.Difficulty), result);
         NewRecordText.Visibility = record ? Visibility.Visible : Visibility.Collapsed;
+        ShowLessonOutcome(result);
 
         StatsGrid.Children.Clear();
         StatsGrid.RowDefinitions.Clear();
@@ -184,14 +199,61 @@ public partial class MainWindow : Window
         AddStat("Макс. комбо", result.MaxCombo.ToString(CultureInfo.InvariantCulture));
         AddStat("Сбито кораблей", result.Words.ToString(CultureInfo.InvariantCulture));
 
-        TroubleText.Text = string.IsNullOrEmpty(result.TroubleLetters)
+        TroubleText.Text = (string.IsNullOrEmpty(result.TroubleLetters)
             ? "Ни одной ошибки — отличная работа!"
-            : "Чаще всего ошибались на буквах:\n" + result.TroubleLetters;
+            : "Чаще всего ошибались на буквах:\n" + result.TroubleLetters)
+            + (result.Lesson != null ? "\n\nСовет: " + LessonCatalog.Tips[Random.Shared.Next(LessonCatalog.Tips.Length)] : "");
 
         GameOverPanel.Visibility = Visibility.Visible;
         _screen = Screen.GameOver;
         _gameOverShownAt = DateTime.Now;
     }
+
+    void ShowLessonOutcome(GameResult result)
+    {
+        bool lesson = result.Lesson != null && _currentPlan != null;
+        bool passed = lesson && result.Completed && result.Stars > 0;
+
+        if (!lesson)
+        {
+            GameOverTitle.Text = "КОРАБЛЬ УНИЧТОЖЕН";
+            GameOverTitle.Foreground = (Brush)new BrushConverter().ConvertFromString("#FF4D6D")!;
+        }
+        else if (passed)
+        {
+            GameOverTitle.Text = "УРОК ПРОЙДЕН";
+            GameOverTitle.Foreground = (Brush)new BrushConverter().ConvertFromString("#6BFFB0")!;
+        }
+        else
+        {
+            GameOverTitle.Text = result.Completed ? "НУЖНО ТОЧНЕЕ" : "КОРАБЛЬ УНИЧТОЖЕН";
+            GameOverTitle.Foreground = (Brush)new BrushConverter().ConvertFromString(result.Completed ? "#FF9F1C" : "#FF4D6D")!;
+        }
+
+        ResultStars.Visibility = lesson ? Visibility.Visible : Visibility.Collapsed;
+        ResultStars.Text = new string('★', result.Stars) + new string('☆', 3 - result.Stars);
+
+        var lessons = LessonCatalog.For(SelectedBank());
+        bool hasNext = passed && result.Lesson!.Number < lessons.Count;
+        NextLessonButton.Visibility = hasNext ? Visibility.Visible : Visibility.Collapsed;
+        RestartButton.Content = lesson ? "ПОВТОРИТЬ УРОК" + (hasNext ? "" : "  [Enter]") : "ИГРАТЬ СНОВА  [Enter]";
+
+        if (passed)
+        {
+            _scores.SubmitStars(_currentPlan!.Key, result.Stars);
+            if (hasNext)
+                _scores.SetCurrentLesson(SelectedBank().Id, result.Lesson!.Number);
+        }
+    }
+
+    void StartNextLesson()
+    {
+        // Индекс следующего урока уже сохранён в ShowLessonOutcome
+        UpdateMenuInfo();
+        StartGame();
+    }
+
+    void NextLesson_Click(object sender, RoutedEventArgs e) => StartNextLesson();
 
     void AddStat(string label, string value, string color = "#F2F6FF")
     {
@@ -228,6 +290,33 @@ public partial class MainWindow : Window
     void Resume_Click(object sender, RoutedEventArgs e) => Resume();
     void Menu_Click(object sender, RoutedEventArgs e) => ShowMenu();
     void Difficulty_Click(object sender, RoutedEventArgs e) => UpdateMenuInfo();
+    void Mode_Click(object sender, RoutedEventArgs e) => UpdateMenuInfo();
+
+    void LessonPrev_Click(object sender, RoutedEventArgs e) => ShiftLesson(-1);
+    void LessonNext_Click(object sender, RoutedEventArgs e) => ShiftLesson(+1);
+
+    void ShiftLesson(int delta)
+    {
+        var bank = SelectedBank();
+        var lessons = LessonCatalog.For(bank);
+        if (lessons.Count == 0)
+            return;
+        int index = Math.Clamp(_scores.GetCurrentLesson(bank.Id) + delta, 0, lessons.Count - 1);
+        _scores.SetCurrentLesson(bank.Id, index);
+        UpdateMenuInfo();
+    }
+
+    /// <summary>Выбранный урок или null, если включена свободная игра (или свой файл слов).</summary>
+    Lesson? SelectedLesson()
+    {
+        if (ModeLessons.IsChecked != true)
+            return null;
+        var bank = SelectedBank();
+        var lessons = LessonCatalog.For(bank);
+        if (lessons.Count == 0)
+            return null;
+        return lessons[Math.Clamp(_scores.GetCurrentLesson(bank.Id), 0, lessons.Count - 1)];
+    }
 
     void Lang_Click(object sender, RoutedEventArgs e)
     {
@@ -268,6 +357,29 @@ public partial class MainWindow : Window
 
     void UpdateMenuInfo()
     {
+        var lesson = SelectedLesson();
+        LessonPanel.Visibility = lesson != null ? Visibility.Visible : Visibility.Collapsed;
+        if (ModeLessons.IsChecked == true && lesson == null)
+        {
+            // Для своего файла слов уроков нет
+            LessonPanel.Visibility = Visibility.Visible;
+            LessonTitle.Text = "Уроки доступны для English и Русского";
+            LessonLetters.Text = "для своего файла слов будет свободная игра";
+            LessonStars.Text = "";
+            LessonTip.Text = "";
+        }
+        else if (lesson != null)
+        {
+            var bank = SelectedBank();
+            var lessons = LessonCatalog.For(bank);
+            int stars = _scores.StarsFor($"{bank.Id}-lesson{lesson.Number}");
+            int passed = lessons.Count(l => _scores.StarsFor($"{bank.Id}-lesson{l.Number}") > 0);
+            LessonTitle.Text = $"{lesson.Title}   ({lesson.Number}/{lessons.Count})";
+            LessonLetters.Text = $"изученные буквы: {lesson.Letters.ToUpperInvariant()}  ·  пройдено уроков: {passed}";
+            LessonStars.Text = new string('★', stars) + new string('☆', 3 - stars);
+            LessonTip.Text = "💡 " + lesson.Tip;
+        }
+
         DifficultyInfo.Text = SelectedDifficulty() switch
         {
             Difficulty.Easy => "медленные враги · 3 щита · 2 ЭМИ на волну",
@@ -275,7 +387,8 @@ public partial class MainWindow : Window
             _ => "обычная скорость · 2 щита · 1 ЭМИ на волну",
         };
 
-        var best = _scores.Get(ScoreKey(SelectedBank(), SelectedDifficulty()));
+        string bankId = lesson != null ? $"{SelectedBank().Id}-lesson{lesson.Number}" : SelectedBank().Id;
+        var best = _scores.Get($"{bankId}|{SelectedDifficulty()}");
         BestText.Text = best == null
             ? "Рекорда пока нет — самое время его поставить!"
             : $"Рекорд: {best.Score.ToString("N0", CultureInfo.CurrentCulture)} · волна {best.Wave} · {best.Wpm:0} WPM";

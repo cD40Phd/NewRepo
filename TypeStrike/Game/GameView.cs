@@ -107,7 +107,7 @@ public sealed class GameView : FrameworkElement
             dc.DrawRectangle(new SolidColorBrush(WithAlpha(p.Color, k)), null, new Rect(p.Pos.X - s / 2, p.Pos.Y - s / 2, s, s));
         }
 
-        if (g.Phase is Phase.Intermission or Phase.Fighting)
+        if (g.Phase is Phase.Intermission or Phase.Fighting or Phase.Finishing)
             DrawShip(dc, g);
 
         if (shaking)
