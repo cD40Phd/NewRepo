@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -22,6 +23,10 @@ public partial class MainWindow : Window
     const double HintLowerSeconds = 12;
     /// <summary>Сколько секунд взгляд должен удерживаться на цели, прежде чем подсказка начнёт уезжать.</summary>
     const double GazeHoldSeconds = 1.5;
+    /// <summary>Через сколько новых игровых точек пересчитывать модель взгляда.</summary>
+    const int RefitEvery = 20;
+    /// <summary>Игровую точку отбрасываем, если модель промахнулась дальше этого (доля экрана) — игрок смотрел не на цель.</summary>
+    const double MaxGameSampleError = 0.45;
 
     const double MinHeadDrop = 0.10;
     const double MaxHeadDrop = 0.40;
@@ -49,6 +54,11 @@ public partial class MainWindow : Window
     Action? _cancelCalibration;
     DispatcherTimer? _gazeResumeTimer;
     double _hintReveal = 1;
+    GazeFrame? _lastGazeFrame;
+    DateTime _lastGazeFrameAt;
+    readonly List<GazeSample> _pendingGameSamples = new();
+    bool _calibrationDirty;
+    int _adaptedThisGame;
     bool _gazeOnTarget;
     DateTime _gazeOnTargetSince;
 
@@ -56,6 +66,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _lastLanguage = LangRu;
+        VersionText.Text = $"версия {AppVersion}";
+        Title = $"TypeStrike {AppVersion} — космический тренажёр слепой печати";
         ApplySettingsToControls();
 
         View.Engine = _engine;
@@ -63,6 +75,7 @@ public partial class MainWindow : Window
         _engine.PlaySound = _sound.Play;
         _engine.GameOver += OnGameOver;
         _engine.WaveCompleted += OnWaveCompleted;
+        _engine.TargetKeyHit += OnTargetKeyHit;
 
         CompositionTarget.Rendering += OnFrame;
         // Ввод с клавиатуры приходит только при наличии фокуса — держим его на игровом поле
@@ -76,6 +89,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             CompositionTarget.Rendering -= OnFrame;
+            SaveAdaptedCalibration();
             StopCamera();
             _sound.Dispose();
         };
@@ -257,6 +271,8 @@ public partial class MainWindow : Window
         _engine.Start(bank, difficulty, _currentPlan, checkpoint?.Wave ?? 0, checkpoint?.Score ?? 0);
 
         HintsHost.Visibility = _settings.KeyboardHint ? Visibility.Visible : Visibility.Collapsed;
+        _adaptedThisGame = 0;
+        _pendingGameSamples.Clear();
         _hintReveal = 1;
         _gazeOnTarget = false;
         UpdateHintReveal(0);
@@ -294,6 +310,7 @@ public partial class MainWindow : Window
 
     void ShowMenu()
     {
+        SaveAdaptedCalibration();
         _engine.Reset();
         HideGazePause();
         StopCamera();
@@ -307,6 +324,7 @@ public partial class MainWindow : Window
 
     void OnGameOver(GameResult result)
     {
+        SaveAdaptedCalibration();
         bool record = _scores.Submit(ScoreKey(_engine.Words, _engine.Difficulty), result);
         NewRecordText.Visibility = record ? Visibility.Visible : Visibility.Collapsed;
         string lessonMessage = ShowLessonOutcome(result);
@@ -330,6 +348,8 @@ public partial class MainWindow : Window
             AddStat("Макс. комбо", result.MaxCombo.ToString(CultureInfo.InvariantCulture));
             AddStat("Сбито кораблей", result.Words.ToString(CultureInfo.InvariantCulture));
         }
+        if (_adaptedThisGame > 0)
+            AddStat("Подстройка взгляда", $"+{_adaptedThisGame} точек", "#5CE1FF");
         if (_gaze != null)
             AddStat("Взгляд на клавиатуру", result.Peeks == 0 ? "ни разу 👍" : $"{result.Peeks} раз",
                 result.Peeks == 0 ? "#6BFFB0" : "#FF9F1C");
@@ -561,6 +581,9 @@ public partial class MainWindow : Window
 
     void OnGazeFrame(GazeFrame frame)
     {
+        _lastGazeFrame = frame;
+        _lastGazeFrameAt = DateTime.Now;
+
         if (_calibration is { Collecting: true } routine && !_calibrationFailed)
         {
             if (frame.Face)
@@ -589,6 +612,9 @@ public partial class MainWindow : Window
         string gaze = frame.HasGaze ? $"взгляд ({frame.GazeX:0.00}; {frame.GazeY:0.00})" : "взгляд: —";
         MetricsText.Text = $"наклон {Math.Max(0, frame.HeadDrop):0.00} · порог {HeadDropThreshold:0.00}\n" +
                            $"лицо: {(frame.Face ? "видно" : "не видно")} · глаза: {(frame.Eyes ? "видны" : "не видны")}\n{gaze}" +
+                           (_settings.Calibration is { } c && c.HasModel(GazeModel.FeatureCount)
+                               ? $"\nкалибровка: ошибка ≈ {c.Error * 100:0}% · подстройка в игре: {c.GameSamples} точек"
+                               : "") +
                            ((DateTime.Now - _calibrationSavedAt).TotalSeconds < 5 ? "\n✔ калибровка сохранена" : "");
 
         // Схема: рамка экрана 140×80 со сдвигом (30; 15) на холсте 200×130
@@ -621,8 +647,7 @@ public partial class MainWindow : Window
         double w = Root.ActualWidth, h = Root.ActualHeight;
         if (_screen == Screen.Game && frame.HasGaze && target != null && w > 0 && h > 0)
         {
-            double tx = target.Pos.X / w;
-            double ty = (target.Pos.Y + target.Radius + 12) / h;
+            var (tx, ty) = TargetPoint(target);
             double tolerance = Math.Max(0.12, (_settings.Calibration?.Error ?? 0.1) * 1.6) * (_gazeOnTarget ? 1.3 : 1.0);
             double dx = frame.GazeX - tx, dy = frame.GazeY - ty;
             onTarget = dx * dx + dy * dy <= tolerance * tolerance;
@@ -632,6 +657,62 @@ public partial class MainWindow : Window
             _gazeOnTargetSince = DateTime.Now;
         _gazeOnTarget = onTarget;
         _engine.GazeOnTarget = onTarget;
+    }
+
+    /// <summary>Куда смотрит игрок, атакуя врага: между кораблём и подписью под ним, в долях окна.</summary>
+    (double X, double Y) TargetPoint(Enemy target) =>
+        (target.Pos.X / Root.ActualWidth, (target.Pos.Y + target.Radius + 12) / Root.ActualHeight);
+
+    /// <summary>
+    /// Подстройка калибровки в игре: при верном нажатии буквы цели игрок смотрит на цель,
+    /// так что признаки глаз в этот момент + положение цели — ещё одна точка калибровки.
+    /// </summary>
+    void OnTargetKeyHit(Enemy target)
+    {
+        var calibration = _settings.Calibration;
+        var frame = _lastGazeFrame;
+        if (!_settings.AdaptiveGaze || _gaze?.State != GazeState.OnScreen || frame?.Features == null ||
+            calibration?.HasModel(GazeModel.FeatureCount) != true || calibration.Samples == null ||
+            (DateTime.Now - _lastGazeFrameAt).TotalSeconds > 0.25 || Root.ActualWidth <= 0 || Root.ActualHeight <= 0)
+            return;
+
+        var (tx, ty) = TargetPoint(target);
+        // Модель промахнулась слишком сильно — вероятно, игрок смотрел не на цель (или кадр плохой)
+        if (frame.HasGaze && Math.Sqrt(Math.Pow(frame.GazeX - tx, 2) + Math.Pow(frame.GazeY - ty, 2)) > MaxGameSampleError)
+            return;
+
+        _pendingGameSamples.Add(new GazeSample(frame.Features, tx, ty, frame.FaceY, frame.FaceHeight,
+            FromGame: true, Weight: GazeModel.GameSampleWeight));
+        if (_pendingGameSamples.Count >= RefitEvery)
+            ApplyGameSamples();
+    }
+
+    void ApplyGameSamples()
+    {
+        var calibration = _settings.Calibration;
+        if (_pendingGameSamples.Count == 0 || calibration == null)
+            return;
+        var updated = GazeModel.Refit(calibration, _pendingGameSamples);
+        _adaptedThisGame += _pendingGameSamples.Count;
+        _pendingGameSamples.Clear();
+        if (updated == null)
+            return;
+        _settings.Calibration = updated;
+        _gaze?.SetCalibration(updated);
+        _calibrationDirty = true;
+    }
+
+    /// <summary>Сохраняем подстроенную калибровку не на каждое нажатие, а в конце игры.</summary>
+    void SaveAdaptedCalibration()
+    {
+        if (_pendingGameSamples.Count >= 5)
+            ApplyGameSamples();
+        _pendingGameSamples.Clear();
+        if (_calibrationDirty)
+        {
+            _settings.Save();
+            _calibrationDirty = false;
+        }
     }
 
     bool GazeTrackingActive =>
@@ -841,6 +922,7 @@ public partial class MainWindow : Window
         UseEyesBox.IsChecked = _settings.CameraUseEyes;
         CalibrateEachGameBox.IsChecked = _settings.CalibrateEachGame;
         AutoHideHintBox.IsChecked = _settings.AutoHideHint;
+        AdaptiveGazeBox.IsChecked = _settings.AdaptiveGaze;
 
         ApplyTextScale();
         UpdateSensitivityText();
@@ -938,6 +1020,7 @@ public partial class MainWindow : Window
         _settings.CameraUseEyes = UseEyesBox.IsChecked == true;
         _settings.CalibrateEachGame = CalibrateEachGameBox.IsChecked == true;
         _settings.AutoHideHint = AutoHideHintBox.IsChecked == true;
+        _settings.AdaptiveGaze = AdaptiveGazeBox.IsChecked == true;
         _settings.Save();
         if (_gaze != null)
             _gaze.UseEyes = _settings.CameraUseEyes;
@@ -1111,6 +1194,12 @@ public partial class MainWindow : Window
         DiffEasy.IsChecked == true ? Difficulty.Easy :
         DiffHard.IsChecked == true ? Difficulty.Hard :
         Difficulty.Normal;
+
+    /// <summary>Версия из свойства &lt;Version&gt; проекта.</summary>
+    static string AppVersion =>
+        Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0]
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
+        ?? "?";
 
     static string ScoreKey(WordBank bank, Difficulty difficulty) => $"{bank.Id}|{difficulty}";
 

@@ -184,6 +184,8 @@ public sealed class GameEngine
     public event Action<GameResult>? GameOver;
     /// <summary>Волна свободной игры пройдена: (номер волны, счёт) — для сохранения уровня.</summary>
     public event Action<int, int>? WaveCompleted;
+    /// <summary>Верно нажата буква цели — в этот момент игрок почти наверняка смотрит на неё.</summary>
+    public event Action<Enemy>? TargetKeyHit;
     public Action<Sfx>? PlaySound { get; set; }
 
     public int Multiplier => 1 + Math.Min(Combo / 20, 4);
@@ -304,6 +306,7 @@ public sealed class GameEngine
         Combo++;
         MaxCombo = Math.Max(MaxCombo, Combo);
         Score += 10 * Multiplier;
+        TargetKeyHit?.Invoke(Target);
         Fire(Target);
         Target.Typed++;
 

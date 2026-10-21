@@ -3,7 +3,8 @@ using TypeStrike.Game;
 namespace TypeStrike.Camera;
 
 /// <summary>Один кадр калибровки: признаки взгляда и точка, на которую игрок смотрел.</summary>
-public sealed record GazeSample(double[] Features, double TargetX, double TargetY, double FaceY, double FaceHeight);
+public sealed record GazeSample(double[] Features, double TargetX, double TargetY, double FaceY, double FaceHeight,
+    bool FromGame = false, double Weight = 1);
 
 /// <summary>
 /// Модель взгляда: гребневая линейная регрессия из признаков
@@ -19,6 +20,10 @@ public static class GazeModel
     /// </summary>
     public const int FeatureCount = 7;
     const double Lambda = 0.05;
+    /// <summary>Вес игровой точки: она менее надёжна, чем точка калибровки.</summary>
+    public const double GameSampleWeight = 0.6;
+    /// <summary>Сколько последних игровых точек хранить.</summary>
+    public const int MaxGameSamples = 300;
 
     public static GazeCalibration? Fit(IReadOnlyList<GazeSample> samples, double eyeRate, out string? error)
     {
@@ -40,25 +45,57 @@ public static class GazeModel
         }
 
         var rows = samples.Select(s => Design(s.Features, means, stds)).ToArray();
-        var weightsX = Ridge(rows, samples.Select(s => s.TargetX).ToArray());
-        var weightsY = Ridge(rows, samples.Select(s => s.TargetY).ToArray());
+        var weights = samples.Select(s => s.Weight).ToArray();
+        var weightsX = Ridge(rows, samples.Select(s => s.TargetX).ToArray(), weights);
+        var weightsY = Ridge(rows, samples.Select(s => s.TargetY).ToArray(), weights);
 
+        // Положение головы «смотрю на экран» берём только из калибровки — в игре голова гуляет
+        var baseline = samples.Where(s => !s.FromGame).DefaultIfEmpty(samples[0]).ToList();
         var calibration = new GazeCalibration
         {
-            FaceY = samples.Average(s => s.FaceY),
-            FaceHeight = samples.Average(s => s.FaceHeight),
+            FaceY = baseline.Average(s => s.FaceY),
+            FaceHeight = baseline.Average(s => s.FaceHeight),
             EyeRate = eyeRate,
             Means = means,
             Stds = stds,
             WeightsX = weightsX,
             WeightsY = weightsY,
         };
-        calibration.Error = samples.Average(s =>
+        calibration.Samples = samples.Select(s => new GazePoint
+        {
+            F = s.Features,
+            X = s.TargetX,
+            Y = s.TargetY,
+            FaceY = s.FaceY,
+            FaceHeight = s.FaceHeight,
+            FromGame = s.FromGame,
+        }).ToList();
+        // Ошибку считаем по калибровочным точкам: они точно размечены
+        calibration.Error = baseline.Average(s =>
         {
             var (x, y) = Predict(calibration, s.Features);
             return Math.Sqrt((x - s.TargetX) * (x - s.TargetX) + (y - s.TargetY) * (y - s.TargetY));
         });
         return calibration;
+    }
+
+    /// <summary>
+    /// Пересчитать модель с добавленными игровыми точками (игрок верно нажал букву цели —
+    /// значит, смотрел на неё). Калибровочные точки сохраняются, игровые — последние
+    /// <see cref="MaxGameSamples"/> с меньшим весом.
+    /// </summary>
+    public static GazeCalibration? Refit(GazeCalibration current, IEnumerable<GazeSample> newGameSamples)
+    {
+        if (current.Samples == null)
+            return null;
+        var stored = current.Samples
+            .Where(p => p.F.Length == FeatureCount)
+            .Select(p => new GazeSample(p.F, p.X, p.Y, p.FaceY, p.FaceHeight, p.FromGame, p.FromGame ? GameSampleWeight : 1));
+        var calibrationPart = stored.Where(s => !s.FromGame).ToList();
+        var gamePart = stored.Where(s => s.FromGame)
+            .Concat(newGameSamples.Select(s => s with { FromGame = true, Weight = GameSampleWeight }))
+            .TakeLast(MaxGameSamples);
+        return Fit(calibrationPart.Concat(gamePart).ToList(), current.EyeRate, out _);
     }
 
     public static (double X, double Y) Predict(GazeCalibration c, double[] features)
@@ -84,8 +121,8 @@ public static class GazeModel
         return sum;
     }
 
-    /// <summary>Решает (XᵀX + λI)w = Xᵀy методом Гаусса (свободный член не штрафуется).</summary>
-    static double[] Ridge(double[][] x, double[] y)
+    /// <summary>Решает (XᵀWX + λI)w = XᵀWy методом Гаусса (свободный член не штрафуется).</summary>
+    static double[] Ridge(double[][] x, double[] y, double[] weight)
     {
         int n = x[0].Length;
         var a = new double[n, n + 1];
@@ -93,11 +130,12 @@ public static class GazeModel
             for (int i = 0; i < n; i++)
             {
                 for (int j = 0; j < n; j++)
-                    a[i, j] += x[r][i] * x[r][j];
-                a[i, n] += x[r][i] * y[r];
+                    a[i, j] += weight[r] * x[r][i] * x[r][j];
+                a[i, n] += weight[r] * x[r][i] * y[r];
             }
+        double total = weight.Sum();
         for (int i = 1; i < n; i++)
-            a[i, i] += Lambda * x.Length;
+            a[i, i] += Lambda * total;
 
         for (int col = 0; col < n; col++)
         {

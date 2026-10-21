@@ -10,7 +10,22 @@
     <AssemblyName>TypeStrike</AssemblyName>
     <!-- Позволяет собирать проект и на не-Windows машинах (запуск — только на Windows) -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Версия программы: показывается в меню и в заголовке окна -->
+    <Version>1.0.0</Version>
+    <Product>TypeStrike</Product>
+    <Description>Космический тренажёр слепой печати</Description>
+    <Copyright>© 2026 TypeStrike</Copyright>
+    <ApplicationIcon>Assets\TypeStrike.ico</ApplicationIcon>
+    <!-- Без хэша коммита в версии, чтобы в меню было просто «1.0.0» -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Иконка перерисовывается скриптом tools/make_icon.py -->
+    <Resource Include="Assets\TypeStrike.ico" />
+    <Resource Include="Assets\TypeStrike.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="OpenCvSharp4.Windows" Version="4.11.0.20250507" />

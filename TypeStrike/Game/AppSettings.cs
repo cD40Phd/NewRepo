@@ -22,9 +22,26 @@ public sealed class GazeCalibration
     /// <summary>Средняя ошибка на калибровочных точках в долях экрана.</summary>
     public double Error { get; set; }
 
+    /// <summary>Точки, по которым построена модель: калибровочные и набранные в игре.</summary>
+    public List<GazePoint>? Samples { get; set; }
+
+    public int GameSamples => Samples?.Count(s => s.FromGame) ?? 0;
+
     public bool HasModel(int featureCount) =>
         Means?.Length == featureCount && Stds?.Length == featureCount &&
         WeightsX?.Length == featureCount + 1 && WeightsY?.Length == featureCount + 1;
+}
+
+/// <summary>Сохранённая точка калибровки: признаки взгляда и куда игрок смотрел.</summary>
+public sealed class GazePoint
+{
+    public double[] F { get; set; } = Array.Empty<double>();
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double FaceY { get; set; }
+    public double FaceHeight { get; set; }
+    /// <summary>Точка получена в игре (верное нажатие по цели), а не при калибровке.</summary>
+    public bool FromGame { get; set; }
 }
 
 /// <summary>Настройки игры в %AppData%\TypeStrike\settings.json.</summary>
@@ -52,6 +69,8 @@ public sealed class AppSettings
     public bool CalibrateEachGame { get; set; }
     /// <summary>Медленно прятать подсказку клавиатуры, пока взгляд следит за атакуемым врагом.</summary>
     public bool AutoHideHint { get; set; } = true;
+    /// <summary>Подстраивать модель взгляда во время игры по верным нажатиям.</summary>
+    public bool AdaptiveGaze { get; set; } = true;
     public GazeCalibration? Calibration { get; set; }
 
     public static AppSettings Load()

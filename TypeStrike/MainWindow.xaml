@@ -5,6 +5,7 @@
         Title="TypeStrike — космический тренажёр скоростной печати"
         Width="1200" Height="820" MinWidth="820" MinHeight="600"
         WindowStartupLocation="CenterScreen"
+        Icon="Assets/TypeStrike.ico"
         Background="#03040C"
         PreviewKeyDown="Window_PreviewKeyDown"
         PreviewTextInput="Window_PreviewTextInput">
@@ -62,12 +63,16 @@
         <ScrollViewer x:Name="MenuPanel" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" Focusable="False">
         <Border Style="{StaticResource PanelStyle}" Width="560" Margin="20">
             <StackPanel>
-                <TextBlock Text="TYPESTRIKE" FontFamily="Consolas" FontSize="56" FontWeight="Bold"
-                           Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center">
-                    <TextBlock.Effect>
-                        <DropShadowEffect Color="#5CE1FF" BlurRadius="24" ShadowDepth="0" />
-                    </TextBlock.Effect>
-                </TextBlock>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Image Source="Assets/TypeStrike.png" Width="64" Height="64" Margin="0,0,14,0"
+                           RenderOptions.BitmapScalingMode="HighQuality" />
+                    <TextBlock Text="TYPESTRIKE" FontFamily="Consolas" FontSize="56" FontWeight="Bold"
+                               Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center">
+                        <TextBlock.Effect>
+                            <DropShadowEffect Color="#5CE1FF" BlurRadius="24" ShadowDepth="0" />
+                        </TextBlock.Effect>
+                    </TextBlock>
+                </StackPanel>
                 <TextBlock Text="космический тренажёр скоростной печати" FontFamily="Consolas" FontSize="15"
                            Foreground="{StaticResource DimBrush}" HorizontalAlignment="Center" Margin="0,0,0,6" />
 
@@ -145,6 +150,8 @@
                     <Run Foreground="White" Text="Backspace" /><Run Text=" — сменить цель   " />
                     <Run Foreground="White" Text="Esc" /><Run Text=" — пауза" />
                 </TextBlock>
+                <TextBlock x:Name="VersionText" FontFamily="Consolas" FontSize="12" Foreground="#5A6B8C"
+                           HorizontalAlignment="Right" Margin="0,12,0,0" />
             </StackPanel>
         </Border>
         </ScrollViewer>
@@ -253,6 +260,11 @@
                               FontSize="14" Margin="4,2" Click="CameraOption_Click">
                         <TextBlock TextWrapping="Wrap"
                                    Text="Прятать подсказку клавиатуры, пока взгляд следит за целью (возвращается на новой букве и после ошибки)" />
+                    </CheckBox>
+                    <CheckBox x:Name="AdaptiveGazeBox" Focusable="False" Foreground="#C8D3EA" FontFamily="Consolas"
+                              FontSize="14" Margin="4,2" Click="CameraOption_Click">
+                        <TextBlock TextWrapping="Wrap"
+                                   Text="Подстраивать калибровку во время игры (при верном нажатии вы смотрите на цель — это новая точка калибровки)" />
                     </CheckBox>
                     <CheckBox x:Name="CalibrateEachGameBox" Content="Калибровать в начале каждой игры"
                               Focusable="False" Foreground="#C8D3EA" FontFamily="Consolas" FontSize="14" Margin="4,2"
