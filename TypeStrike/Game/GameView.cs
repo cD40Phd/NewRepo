@@ -35,6 +35,7 @@ public sealed class GameView : FrameworkElement
     static readonly Brush LabelBgTarget = Freeze(new SolidColorBrush(Color.FromArgb(0xE6, 0x2A, 0x1A, 0x08)));
     static readonly Pen LabelPen = Freeze(new Pen(TypedBrush, 1.5));
     static readonly Pen ReticlePen = Freeze(new Pen(TypedBrush, 2) { DashStyle = new DashStyle(new double[] { 3, 3 }, 0) });
+    static readonly Pen GazePen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0xC0, 0x6B, 0xFF, 0xB0))), 2.5));
     static readonly Pen BulletPen = Freeze(new Pen(Solid(0xFF, 0xD0, 0x80), 2.5) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
     static readonly Pen BulletGlowPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(90, 255, 160, 40))), 8) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
     static readonly Pen ShieldPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(70, 0x6B, 0xFF, 0xB0))), 2));
@@ -161,6 +162,13 @@ public sealed class GameView : FrameworkElement
             dc.DrawEllipse(null, ReticlePen, new Point(0, 0), e.Radius + 9, e.Radius + 9);
             dc.Pop();
         }
+
+        // Зелёное кольцо: камера видит, что взгляд следит за этим врагом
+        if (g.GazeOnTarget && e == g.HintEnemy)
+        {
+            double r = e.Radius + 15 + Math.Sin(g.Time * 6) * 2;
+            dc.DrawEllipse(null, GazePen, new Point(0, 0), r, r);
+        }
         dc.Pop();
     }
 
@@ -243,6 +251,9 @@ public sealed class GameView : FrameworkElement
             DrawText(dc, $"{g.Wpm:0} WPM", 22, TextBrush, w - 20, h - 60, TextAlignment.Right);
             DrawText(dc, $"точность {g.Accuracy:0.#}%", 14, DimBrush, w - 20, h - 30, TextAlignment.Right);
         }
+
+        if (g.HintLowered && g.Phase == Phase.Fighting)
+            DrawText(dc, "⌨ подсказка спрятана — взгляд следит за целью", 14, GreenBrush, w / 2, h - 26, TextAlignment.Center);
 
         if (g.LookingDown)
             DrawText(dc, "👀 СМОТРИТЕ НА ЭКРАН", 20, TypedBrush, w / 2, h - 175, TextAlignment.Center);

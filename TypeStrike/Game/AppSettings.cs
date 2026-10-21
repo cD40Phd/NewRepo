@@ -50,6 +50,8 @@ public sealed class AppSettings
     /// <summary>Учитывать пропажу открытых глаз (веки прикрываются при взгляде вниз).</summary>
     public bool CameraUseEyes { get; set; } = true;
     public bool CalibrateEachGame { get; set; }
+    /// <summary>Медленно прятать подсказку клавиатуры, пока взгляд следит за атакуемым врагом.</summary>
+    public bool AutoHideHint { get; set; } = true;
     public GazeCalibration? Calibration { get; set; }
 
     public static AppSettings Load()

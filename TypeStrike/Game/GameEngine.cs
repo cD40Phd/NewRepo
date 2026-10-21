@@ -55,6 +55,9 @@ public sealed class GameEngine
     readonly Random _rng = new();
     readonly Queue<(EnemyKind Kind, double Delay)> _spawnQueue = new();
     readonly Dictionary<char, int> _missedLetters = new();
+    readonly Dictionary<char, int> _correctLetters = new();
+    readonly Dictionary<char, double> _lastMissAt = new();
+    double _lastMissTime = double.NegativeInfinity;
     double _spawnTimer;
     double _phaseTimer;
     int _waveMisses;
@@ -147,6 +150,35 @@ public sealed class GameEngine
     public int Collisions { get; private set; }
     /// <summary>Камера видит, что игрок смотрит на клавиатуру.</summary>
     public bool LookingDown { get; private set; }
+    /// <summary>Камера видит, что взгляд следит за атакуемым врагом (<see cref="HintEnemy"/>).</summary>
+    public bool GazeOnTarget { get; set; }
+    /// <summary>Подсказка клавиатуры спрятана, потому что взгляд уверенно следит за целью.</summary>
+    public bool HintLowered { get; set; }
+
+    /// <summary>Сколько верных нажатий нужно новой букве урока, прежде чем подсказку можно прятать.</summary>
+    public const int NewLetterPractice = 15;
+
+    /// <summary>
+    /// Почему подсказку клавиатуры нужно показать прямо сейчас (null — можно прятать):
+    /// следующая буква новая для урока или ещё не набиралась, по ней недавно ошибались.
+    /// </summary>
+    public string? HintReason()
+    {
+        var enemy = HintEnemy;
+        if (enemy == null)
+            return null;
+        char c = TextUtil.Norm(enemy.Word[enemy.Typed]);
+        string letter = char.ToUpperInvariant(enemy.Word[enemy.Typed]).ToString();
+
+        if (Time - _lastMissTime < 2.5 || (_lastMissAt.TryGetValue(c, out var missAt) && Time - missAt < 10))
+            return $"ошибка на букве «{letter}»";
+        int practiced = _correctLetters.GetValueOrDefault(c);
+        if (_lesson != null && _lesson.Lesson.NewLetters.Any(n => TextUtil.Norm(n) == c) && practiced < NewLetterPractice)
+            return $"новая буква «{letter}»";
+        if (practiced < 3)
+            return $"новая буква «{letter}»";
+        return null;
+    }
     public double HintTime { get; private set; }
 
     public event Action<GameResult>? GameOver;
@@ -179,6 +211,10 @@ public sealed class GameEngine
         Rings.Clear();
         _spawnQueue.Clear();
         _missedLetters.Clear();
+        _correctLetters.Clear();
+        _lastMissAt.Clear();
+        _lastMissTime = double.NegativeInfinity;
+        GazeOnTarget = HintLowered = false;
         _lesson = null;
         Target = null;
         _aim = null;
@@ -264,6 +300,7 @@ public sealed class GameEngine
         }
 
         Correct++;
+        _correctLetters[c] = _correctLetters.GetValueOrDefault(c) + 1;
         Combo++;
         MaxCombo = Math.Max(MaxCombo, Combo);
         Score += 10 * Multiplier;
@@ -325,8 +362,12 @@ public sealed class GameEngine
         _waveMisses++;
         Combo = 0;
         MissFlash = 0.35;
+        _lastMissTime = Time;
         if (expected is char ch)
+        {
             _missedLetters[ch] = _missedLetters.GetValueOrDefault(ch) + 1;
+            _lastMissAt[ch] = Time;
+        }
         PlaySound?.Invoke(Sfx.Miss);
     }
 

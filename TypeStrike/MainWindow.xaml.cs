@@ -18,6 +18,10 @@ public partial class MainWindow : Window
 
     /// <summary>С какой волны отведённый от экрана взгляд ставит игру на паузу.</summary>
     const int GazePauseFromWave = 2;
+    /// <summary>За сколько секунд подсказка полностью уезжает вниз при уверенном слежении за целью.</summary>
+    const double HintLowerSeconds = 12;
+    /// <summary>Сколько секунд взгляд должен удерживаться на цели, прежде чем подсказка начнёт уезжать.</summary>
+    const double GazeHoldSeconds = 1.5;
 
     const double MinHeadDrop = 0.10;
     const double MaxHeadDrop = 0.40;
@@ -44,6 +48,9 @@ public partial class MainWindow : Window
     Action? _afterCalibration;
     Action? _cancelCalibration;
     DispatcherTimer? _gazeResumeTimer;
+    double _hintReveal = 1;
+    bool _gazeOnTarget;
+    DateTime _gazeOnTargetSince;
 
     public MainWindow()
     {
@@ -86,8 +93,9 @@ public partial class MainWindow : Window
             _engine.Update(dt);
         if (_calibration != null)
             UpdateCalibration(dt);
+        UpdateHintReveal(dt);
         View.InvalidateVisual();
-        if (Hints.Visibility == Visibility.Visible)
+        if (HintsHost.Visibility == Visibility.Visible && HintsHost.Height > 0.5)
             Hints.InvalidateVisual();
     }
 
@@ -248,7 +256,10 @@ public partial class MainWindow : Window
         var checkpoint = resume && _currentPlan == null ? _scores.GetCheckpoint(ScoreKey(bank, difficulty)) : null;
         _engine.Start(bank, difficulty, _currentPlan, checkpoint?.Wave ?? 0, checkpoint?.Score ?? 0);
 
-        Hints.Visibility = _settings.KeyboardHint ? Visibility.Visible : Visibility.Collapsed;
+        HintsHost.Visibility = _settings.KeyboardHint ? Visibility.Visible : Visibility.Collapsed;
+        _hintReveal = 1;
+        _gazeOnTarget = false;
+        UpdateHintReveal(0);
         if (_settings.CameraEnabled)
         {
             StartCamera();
@@ -286,7 +297,7 @@ public partial class MainWindow : Window
         _engine.Reset();
         HideGazePause();
         StopCamera();
-        Hints.Visibility = Visibility.Collapsed;
+        HintsHost.Visibility = Visibility.Collapsed;
         PausePanel.Visibility = Visibility.Collapsed;
         GameOverPanel.Visibility = Visibility.Collapsed;
         MenuPanel.Visibility = Visibility.Visible;
@@ -565,6 +576,8 @@ public partial class MainWindow : Window
             }
         }
 
+        UpdateGazeOnTarget(frame);
+
         if (_screen != Screen.Settings)
             return;
 
@@ -593,6 +606,64 @@ public partial class MainWindow : Window
         {
             GazeDot.Visibility = Visibility.Hidden;
         }
+    }
+
+    // ───────────────────────────── Взгляд на цели и подсказка ─────────────────────────────
+
+    /// <summary>
+    /// Смотрит ли игрок туда, где находится атакуемый враг (корабль и подпись под ним).
+    /// Допуск зависит от точности калибровки; с гистерезисом, чтобы не мигало.
+    /// </summary>
+    void UpdateGazeOnTarget(GazeFrame frame)
+    {
+        bool onTarget = false;
+        var target = _engine.HintEnemy;
+        double w = Root.ActualWidth, h = Root.ActualHeight;
+        if (_screen == Screen.Game && frame.HasGaze && target != null && w > 0 && h > 0)
+        {
+            double tx = target.Pos.X / w;
+            double ty = (target.Pos.Y + target.Radius + 12) / h;
+            double tolerance = Math.Max(0.12, (_settings.Calibration?.Error ?? 0.1) * 1.6) * (_gazeOnTarget ? 1.3 : 1.0);
+            double dx = frame.GazeX - tx, dy = frame.GazeY - ty;
+            onTarget = dx * dx + dy * dy <= tolerance * tolerance;
+        }
+
+        if (onTarget && !_gazeOnTarget)
+            _gazeOnTargetSince = DateTime.Now;
+        _gazeOnTarget = onTarget;
+        _engine.GazeOnTarget = onTarget;
+    }
+
+    bool GazeTrackingActive =>
+        _gaze?.State is GazeState.OnScreen or GazeState.LookingAway &&
+        _settings.Calibration?.HasModel(GazeModel.FeatureCount) == true;
+
+    /// <summary>
+    /// Пока взгляд уверенно следит за целью, подсказка медленно уезжает вниз.
+    /// Новая буква, ошибка или взгляд мимо экрана быстро возвращают её.
+    /// </summary>
+    void UpdateHintReveal(double dt)
+    {
+        if (HintsHost.Visibility != Visibility.Visible)
+            return;
+
+        bool autoHide = _settings.AutoHideHint && GazeTrackingActive;
+        if (!autoHide)
+        {
+            _hintReveal = Math.Min(1, _hintReveal + dt * 3);
+        }
+        else if (_screen == Screen.Game && _engine.Phase == Phase.Fighting)
+        {
+            bool needed = _engine.HintReason() != null || _gaze?.State == GazeState.LookingAway;
+            bool tracking = _gazeOnTarget && (DateTime.Now - _gazeOnTargetSince).TotalSeconds >= GazeHoldSeconds;
+            if (needed)
+                _hintReveal = Math.Min(1, _hintReveal + dt * 3);
+            else if (tracking)
+                _hintReveal = Math.Max(0, _hintReveal - dt / HintLowerSeconds);
+        }
+
+        _engine.HintLowered = autoHide && _hintReveal < 0.15;
+        HintsHost.Height = Hints.Height * _hintReveal;
     }
 
     // ───────────────────────────── Пауза по взгляду ─────────────────────────────
@@ -769,6 +840,7 @@ public partial class MainWindow : Window
         SensitivitySlider.Value = (MaxHeadDrop - HeadDropThreshold) / (MaxHeadDrop - MinHeadDrop) * 100;
         UseEyesBox.IsChecked = _settings.CameraUseEyes;
         CalibrateEachGameBox.IsChecked = _settings.CalibrateEachGame;
+        AutoHideHintBox.IsChecked = _settings.AutoHideHint;
 
         ApplyTextScale();
         UpdateSensitivityText();
@@ -782,6 +854,7 @@ public partial class MainWindow : Window
         View.TextScale = scale;
         Hints.TextScale = scale;
         Hints.Height = (224 + 32 * scale) * 0.9;
+        HintsHost.Height = Hints.Height * _hintReveal;
         SizePreview.FontSize = 16 * scale;
     }
 
@@ -864,6 +937,7 @@ public partial class MainWindow : Window
     {
         _settings.CameraUseEyes = UseEyesBox.IsChecked == true;
         _settings.CalibrateEachGame = CalibrateEachGameBox.IsChecked == true;
+        _settings.AutoHideHint = AutoHideHintBox.IsChecked == true;
         _settings.Save();
         if (_gaze != null)
             _gaze.UseEyes = _settings.CameraUseEyes;
