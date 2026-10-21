@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     const double HintLowerSeconds = 12;
     /// <summary>Сколько секунд взгляд должен удерживаться на цели, прежде чем подсказка начнёт уезжать.</summary>
     const double GazeHoldSeconds = 1.5;
+    /// <summary>Сколько секунд взгляд должен продержаться на экране, чтобы снять паузу.</summary>
+    const double GazeResumeSeconds = 0.4;
     /// <summary>Через сколько новых игровых точек пересчитывать модель взгляда.</summary>
     const int RefitEvery = 20;
     /// <summary>Игровую точку отбрасываем, если модель промахнулась дальше этого (доля экрана) — игрок смотрел не на цель.</summary>
@@ -108,6 +110,8 @@ public partial class MainWindow : Window
         if (_calibration != null)
             UpdateCalibration(dt);
         UpdateHintReveal(dt);
+        if (_gaze != null)
+            _gaze.PreviewEnabled = _screen == Screen.Settings || CameraPanel.Visibility == Visibility.Visible;
         View.InvalidateVisual();
         if (HintsHost.Visibility == Visibility.Visible && HintsHost.Height > 0.5)
             Hints.InvalidateVisual();
@@ -612,6 +616,7 @@ public partial class MainWindow : Window
         string gaze = frame.HasGaze ? $"взгляд ({frame.GazeX:0.00}; {frame.GazeY:0.00})" : "взгляд: —";
         MetricsText.Text = $"наклон {Math.Max(0, frame.HeadDrop):0.00} · порог {HeadDropThreshold:0.00}\n" +
                            $"лицо: {(frame.Face ? "видно" : "не видно")} · глаза: {(frame.Eyes ? "видны" : "не видны")}\n{gaze}" +
+                           $"\nкамера: {frame.Fps:0} к/с · обработка {frame.ProcessingMs:0} мс · задержка {frame.LatencyMs:0} мс" +
                            (_settings.Calibration is { } c && c.HasModel(GazeModel.FeatureCount)
                                ? $"\nкалибровка: ошибка ≈ {c.Error * 100:0}% · подстройка в игре: {c.GameSamples} точек"
                                : "") +
@@ -770,7 +775,7 @@ public partial class MainWindow : Window
     {
         GazeResumeText.Text = "Отлично! Продолжаем…";
         _gazeResumeTimer?.Stop();
-        _gazeResumeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _gazeResumeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(GazeResumeSeconds) };
         _gazeResumeTimer.Tick += (_, _) =>
         {
             _gazeResumeTimer?.Stop();
