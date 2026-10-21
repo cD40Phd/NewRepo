@@ -7,14 +7,17 @@ public sealed record GazeSample(double[] Features, double TargetX, double Target
 
 /// <summary>
 /// Модель взгляда: гребневая линейная регрессия из признаков
-/// (положение зрачков относительно лица, положение и размер лица в кадре)
+/// (положение радужки в разрезе век, баланс белка, открытость глаза, положение и размер лица)
 /// в нормированные координаты окна (0..1). Точность у веб-камеры скромная,
 /// но её хватает, чтобы отличить «смотрит на экран» от «смотрит на клавиатуру».
 /// </summary>
 public static class GazeModel
 {
-    /// <summary>Зрачок X, зрачок Y (относительно лица), центр лица X, Y, ширина лица.</summary>
-    public const int FeatureCount = 5;
+    /// <summary>
+    /// Радужка X и Y в разрезе глаза, открытость (видимая высота радужки к её ширине),
+    /// баланс белка слева/справа, центр лица X и Y, ширина лица.
+    /// </summary>
+    public const int FeatureCount = 7;
     const double Lambda = 0.05;
 
     public static GazeCalibration? Fit(IReadOnlyList<GazeSample> samples, double eyeRate, out string? error)

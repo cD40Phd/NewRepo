@@ -23,8 +23,9 @@ public sealed record GazeFrame(
 
 /// <summary>
 /// Отслеживание взгляда веб-камерой (OpenCV, каскады Хаара).
-/// В каждом кадре ищутся лицо, глаза и зрачки (самая тёмная область внутри глаза).
-/// Признаки — положение зрачков относительно лица и положение лица в кадре — после
+/// В каждом кадре ищутся лицо, глаза и радужки — тёмный круг в разрезе век на белом фоне белка.
+/// Признаки — положение радужки в разрезе глаза, сколько белка видно с каждой стороны,
+/// насколько веко срезает радужку, положение лица в кадре — после
 /// калибровки по движущейся точке переводятся моделью <see cref="GazeModel"/> в точку на экране.
 /// Взгляд «не на экране»: точка ушла за границы окна (обычно вниз, на клавиатуру),
 /// голова заметно опущена, открытые глаза пропали или лицо исчезло из кадра.
@@ -70,7 +71,7 @@ public sealed class GazeTracker : IDisposable
 
     /// <summary>Вызывается в UI-потоке при смене состояния.</summary>
     public event Action<GazeState>? StateChanged;
-    /// <summary>Кадр предпросмотра (зеркальный, с рамками лица, глаз и зрачками), в UI-потоке.</summary>
+    /// <summary>Кадр предпросмотра (зеркальный, с рамками лица, глаз и радужек), в UI-потоке.</summary>
     public event Action<BitmapSource>? Preview;
     /// <summary>Признаки и оценка взгляда по каждому кадру, в UI-потоке.</summary>
     public event Action<GazeFrame>? Frame;
@@ -221,9 +222,12 @@ public sealed class GazeTracker : IDisposable
     /// <summary>Точка взгляда за пределами окна (с запасом на неточность модели).</summary>
     public static bool IsOffScreen(double x, double y) => y > 1.12 || y < -0.35 || x < -0.3 || x > 1.3;
 
+    /// <summary>Признаки одного глаза (всё нормировано на размер разреза глаза).</summary>
+    readonly record struct EyeFeatures(double IrisX, double IrisY, double Openness, double ScleraBalance);
+
     /// <summary>
-    /// Ищет глаза и зрачки. Возвращает признаки
-    /// [зрачок X и Y относительно лица, центр лица X и Y в кадре, ширина лица] или null.
+    /// Ищет глаза и радужки. Возвращает признаки
+    /// [радужка X, радужка Y, открытость, баланс белка, центр лица X, Y, ширина лица] или null.
     /// </summary>
     static double[]? Analyze(Mat gray, Mat preview, Rect face, CascadeClassifier eyeCascade, out bool eyesFound)
     {
@@ -232,57 +236,132 @@ public sealed class GazeTracker : IDisposable
         Rect[] eyes;
         using (var roi = new Mat(gray, upper))
             eyes = eyeCascade.DetectMultiScale(roi, 1.1, 4, HaarDetectionTypes.ScaleImage, new Size(face.Width / 8, face.Width / 8));
-        eyesFound = eyes.Length > 0;
 
-        double sumX = 0, sumY = 0;
-        int pupils = 0;
+        var found = new List<EyeFeatures>();
         foreach (var e in eyes.OrderByDescending(e => e.Width * e.Height).Take(2))
         {
             var eye = new Rect(face.X + e.X, face.Y + e.Y, e.Width, e.Height);
             Cv2.Rectangle(preview, eye, Scalar.FromRgb(0x6B, 0xFF, 0xB0), 1);
-            if (FindPupil(gray, eye) is Point2d pupil)
-            {
-                Cv2.Circle(preview, new Point((int)pupil.X, (int)pupil.Y), 2, Scalar.FromRgb(0xFF, 0x9F, 0x1C), -1);
-                sumX += pupil.X;
-                sumY += pupil.Y;
-                pupils++;
-            }
+            if (AnalyzeEye(gray, preview, eye) is EyeFeatures features)
+                found.Add(features);
         }
-        if (pupils == 0)
+
+        // «Глаза видны» — значит, видна радужка в разрезе век; если веки прикрыты, её нет
+        eyesFound = found.Count > 0;
+        if (found.Count == 0)
             return null;
 
         return new[]
         {
-            (sumX / pupils - face.X) / face.Width,
-            (sumY / pupils - face.Y) / face.Height,
+            found.Average(f => f.IrisX),
+            found.Average(f => f.IrisY),
+            found.Average(f => f.Openness),
+            found.Average(f => f.ScleraBalance),
             (face.X + face.Width / 2.0) / gray.Cols,
             (face.Y + face.Height / 2.0) / gray.Rows,
             face.Width / (double)gray.Cols,
         };
     }
 
-    /// <summary>Зрачок — центр самых тёмных пикселей в средней части глаза (без брови и уголков).</summary>
-    static Point2d? FindPupil(Mat gray, Rect eye)
+    /// <summary>
+    /// Радужка целиком: тёмный круг в разрезе век на фоне белка.
+    /// По горизонтали — самая тёмная вертикальная полоса шириной с радужку,
+    /// по вертикали — строки, где эта полоса тёмная (верхнее веко срезает радужку,
+    /// когда смотрят вниз). Белок — самые светлые пиксели слева и справа от радужки.
+    /// </summary>
+    static EyeFeatures? AnalyzeEye(Mat gray, Mat preview, Rect eye)
     {
-        var inner = new Rect(eye.X + eye.Width * 15 / 100, eye.Y + eye.Height * 30 / 100,
-            eye.Width * 70 / 100, eye.Height * 50 / 100);
+        // Убираем бровь сверху, щёку снизу и уголки по бокам
+        var inner = new Rect(eye.X + eye.Width * 8 / 100, eye.Y + eye.Height * 25 / 100,
+            eye.Width * 84 / 100, eye.Height * 60 / 100);
         inner &= new Rect(0, 0, gray.Cols, gray.Rows);
-        if (inner.Width < 4 || inner.Height < 3)
+        int w = inner.Width, h = inner.Height;
+        if (w < 10 || h < 6)
             return null;
 
         using var roi = new Mat(gray, inner);
         using var blurred = new Mat();
-        using var mask = new Mat();
-        Cv2.GaussianBlur(roi, blurred, new Size(5, 5), 0);
-        Cv2.MinMaxLoc(blurred, out double min, out double max);
-        if (max - min < 10)
-            return null;
-        Cv2.Threshold(blurred, mask, min + (max - min) * 0.25, 255, ThresholdTypes.BinaryInv);
+        using var otsuMask = new Mat();
+        Cv2.GaussianBlur(roi, blurred, new Size(3, 3), 0);
+        double otsu = Cv2.Threshold(blurred, otsuMask, 0, 255, ThresholdTypes.BinaryInv | ThresholdTypes.Otsu);
+        blurred.GetArray(out byte[] pixels);
 
-        var m = Cv2.Moments(mask, true);
-        if (m.M00 < 3)
+        // Тёмное — только радужка. Одного порога Оцу мало: когда веко опущено,
+        // он делит «кожа | белок» и засчитывает кожу века тёмной. Поэтому порог
+        // не выше середины между самыми тёмными пикселями и медианой.
+        var sorted = (byte[])pixels.Clone();
+        Array.Sort(sorted);
+        double low = sorted[sorted.Length * 5 / 100];
+        double median = sorted[sorted.Length / 2];
+        double darkThreshold = Math.Min(otsu, low + (median - low) * 0.6);
+        var mask = new byte[pixels.Length];
+        for (int i = 0; i < pixels.Length; i++)
+            mask[i] = pixels[i] <= darkThreshold ? (byte)1 : (byte)0;
+
+        // Самая тёмная вертикальная полоса шириной с радужку
+        int irisWidth = Math.Max(3, (int)(w * 0.35));
+        var columnDark = new int[w];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (mask[y * w + x] != 0)
+                    columnDark[x]++;
+
+        int window = 0, best = -1, bestX = 0;
+        for (int x = 0; x < w; x++)
+        {
+            window += columnDark[x];
+            if (x >= irisWidth)
+                window -= columnDark[x - irisWidth];
+            if (x >= irisWidth - 1 && window > best)
+            {
+                best = window;
+                bestX = x - irisWidth + 1;
+            }
+        }
+        // Радужки не видно (веки прикрыты или смотрят сильно вниз)
+        if (best < irisWidth * h * 0.15)
             return null;
-        return new Point2d(inner.X + m.M10 / m.M00, inner.Y + m.M01 / m.M00);
+
+        // Строки, в которых видна радужка
+        int top = -1, bottom = -1;
+        for (int y = 0; y < h; y++)
+        {
+            int count = 0;
+            for (int x = bestX; x < bestX + irisWidth; x++)
+                if (mask[y * w + x] != 0)
+                    count++;
+            if (count > irisWidth * 0.35)
+            {
+                if (top < 0)
+                    top = y;
+                bottom = y;
+            }
+        }
+        if (top < 0)
+            return null;
+        int visible = bottom - top + 1;
+
+        // Белок: светлые пиксели слева и справа от радужки в разрезе век
+        double brightThreshold = median + (255 - median) * 0.4;
+        int left = 0, right = 0;
+        for (int y = top; y <= bottom; y++)
+            for (int x = 0; x < w; x++)
+            {
+                if (pixels[y * w + x] <= brightThreshold)
+                    continue;
+                if (x < bestX)
+                    left++;
+                else if (x >= bestX + irisWidth)
+                    right++;
+            }
+
+        Cv2.Rectangle(preview, new Rect(inner.X + bestX, inner.Y + top, irisWidth, visible), Scalar.FromRgb(0xFF, 0x9F, 0x1C), 1);
+
+        return new EyeFeatures(
+            IrisX: (bestX + irisWidth / 2.0) / w,
+            IrisY: (top + bottom) / 2.0 / h,
+            Openness: Math.Min(1.5, visible / (double)irisWidth),
+            ScleraBalance: (left - right) / (double)(left + right + 1));
     }
 
     void SetState(GazeState state)
