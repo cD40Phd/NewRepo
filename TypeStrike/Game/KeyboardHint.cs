@@ -11,13 +11,11 @@ namespace TypeStrike.Game;
 public sealed class KeyboardHint : FrameworkElement
 {
     const double Unit = 40;
-    const double StripHeight = 46;
     const double HandWidth = 150;
     const double Gap = 20;
     const double KeyboardX = HandWidth + Gap;
     const double KeyboardWidth = KeyboardLayout.Width * Unit;
     const double TotalWidth = KeyboardWidth + 2 * (HandWidth + Gap);
-    const double TotalHeight = StripHeight + KeyboardLayout.Rows * Unit + 8;
 
     static readonly Typeface Mono = new(new FontFamily("Consolas, Courier New"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
 
@@ -67,6 +65,14 @@ public sealed class KeyboardHint : FrameworkElement
 
     public GameEngine? Engine { get; set; }
 
+    /// <summary>Масштаб букв в строке слова и на клавишах (настройка «Размер букв»).</summary>
+    public double TextScale { get; set; } = 1.4;
+
+    double StripHeight => 16 + 32 * TextScale;
+    double TotalHeight => StripHeight + KeyboardLayout.Rows * Unit + 8;
+    double KeyFont => 16 * Math.Min(TextScale, 1.35);
+    double StripFont => 17 * Math.Min(TextScale, 1.3);
+
     protected override void OnRender(DrawingContext dc)
     {
         double w = ActualWidth, h = ActualHeight;
@@ -98,43 +104,51 @@ public sealed class KeyboardHint : FrameworkElement
 
     void DrawStrip(DrawingContext dc, GameEngine g, Enemy? enemy, KeyCap? key, KeyboardLayout layout)
     {
-        double y = 8;
+        const double y = 8;
+        double wordFont = 26 * TextScale;
+        double lineHeight = wordFont * 1.3;
+        // Мелкий текст выравниваем по центру строки с крупным словом
+        double smallY = y + (lineHeight - StripFont * 1.25) / 2;
+
         if (enemy == null)
         {
             string home = layout == KeyboardLayout.Russian ? "ФЫВА — ОЛДЖ" : "ASDF — JKL;";
             string text = g.Phase == Phase.Fighting
                 ? $"Ждём врагов… Пальцы на основном ряду: {home}"
                 : $"Пальцы на основном ряду: {home}. Не смотрите на клавиатуру!";
-            Draw(dc, text, 17, DimBrush, TotalWidth / 2, y + 6, TextAlignment.Center);
+            Draw(dc, text, StripFont, DimBrush, TotalWidth / 2, smallY, TextAlignment.Center);
             return;
         }
 
-        double x = KeyboardX;
+        double x = 12;
         if (enemy != g.Target)
         {
-            var label = Text("цель: ", 17, DimBrush);
-            dc.DrawText(label, new Point(x, y + 6));
+            var label = Text("цель: ", StripFont, DimBrush);
+            dc.DrawText(label, new Point(x, smallY));
             x += label.WidthIncludingTrailingWhitespace;
         }
 
-        double charWidth = Text("0", 26, TextBrush).WidthIncludingTrailingWhitespace;
+        double charWidth = Text("0", wordFont, TextBrush).WidthIncludingTrailingWhitespace;
         for (int i = 0; i < enemy.Word.Length; i++)
         {
             Brush brush = i < enemy.Typed ? DoneBrush : TextBrush;
             if (i == enemy.Typed)
             {
                 var fill = key?.Finger is Finger f ? FingerBrushes[(int)f] : TextBrush;
-                dc.DrawRoundedRectangle(fill, null, new Rect(x - 2, y - 1, charWidth + 4, 34), 5, 5);
+                dc.DrawRoundedRectangle(fill, null, new Rect(x - 2, y - 1, charWidth + 4, lineHeight), 5, 5);
                 brush = DarkText;
             }
-            dc.DrawText(Text(enemy.Word[i].ToString(), 26, brush), new Point(x, y));
+            dc.DrawText(Text(enemy.Word[i].ToString(), wordFont, brush), new Point(x, y));
             x += charWidth;
         }
 
         if (key?.Finger is Finger finger)
         {
             string hint = $"«{char.ToUpperInvariant(enemy.Word[enemy.Typed])}» — {KeyboardLayout.FingerName(finger)}";
-            Draw(dc, hint, 17, FingerBrushes[(int)finger], KeyboardX + KeyboardWidth, y + 6, TextAlignment.Right);
+            var ft = Text(hint, StripFont, FingerBrushes[(int)finger]);
+            // Длинное крупное слово важнее подписи — подпись рисуем, только если помещается
+            if (x + 24 < TotalWidth - 12 - ft.Width)
+                dc.DrawText(ft, new Point(TotalWidth - 12 - ft.Width, smallY));
         }
     }
 
@@ -164,7 +178,7 @@ public sealed class KeyboardHint : FrameworkElement
             {
                 bool small = key.Char == null;
                 var brush = isActive ? DarkText : small ? DimBrush : TextBrush;
-                var ft = Text(key.Label, small ? 11 : 16, brush);
+                var ft = Text(key.Label, small ? 11 : KeyFont, brush);
                 dc.DrawText(ft, new Point(rect.X + (rect.Width - ft.Width) / 2, rect.Y + (rect.Height - ft.Height) / 2));
             }
 

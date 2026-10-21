@@ -3,6 +3,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using OpenCvSharp;
 using OpenCvSharp.WpfExtensions;
+using TypeStrike.Game;
 
 namespace TypeStrike.Camera;
 
@@ -20,16 +21,42 @@ public sealed class GazeTracker : IDisposable
     const int FrameWidth = 320;
     const double CalibrationSeconds = 2.5;
     const int MinCalibrationSamples = 10;
-    /// <summary>На сколько высот лица должен сместиться центр лица вниз, чтобы считать голову опущенной.</summary>
-    const double HeadDropThreshold = 0.22;
     const int VoteWindow = 8;
 
     readonly Dispatcher _dispatcher;
     readonly CancellationTokenSource _cts = new();
     Task? _worker;
     volatile bool _recalibrate;
+    double _headDropThreshold = 0.22;
+    volatile bool _useEyes = true;
+    DateTime _lastMetrics;
 
-    public GazeTracker(Dispatcher dispatcher) => _dispatcher = dispatcher;
+    public GazeTracker(Dispatcher dispatcher, int cameraIndex)
+    {
+        _dispatcher = dispatcher;
+        CameraIndex = cameraIndex;
+    }
+
+    public int CameraIndex { get; }
+
+    /// <summary>На сколько высот лица должен сместиться центр лица вниз, чтобы считать голову опущенной.</summary>
+    public double HeadDropThreshold
+    {
+        get => Volatile.Read(ref _headDropThreshold);
+        set => Volatile.Write(ref _headDropThreshold, value);
+    }
+
+    /// <summary>Учитывать пропажу открытых глаз.</summary>
+    public bool UseEyes
+    {
+        get => _useEyes;
+        set => _useEyes = value;
+    }
+
+    /// <summary>Калибровка завершена (в UI-потоке) — её можно сохранить и использовать в следующий раз.</summary>
+    public event Action<GazeCalibration>? Calibrated;
+    /// <summary>Текущие показатели для экрана настроек: наклон головы, лицо найдено, глаза найдены.</summary>
+    public event Action<double, bool, bool>? Metrics;
 
     public GazeState State { get; private set; } = GazeState.Starting;
     public string? ErrorMessage { get; private set; }
@@ -39,7 +66,8 @@ public sealed class GazeTracker : IDisposable
     /// <summary>Кадр предпросмотра (зеркальный, с рамками лица и глаз), в UI-потоке.</summary>
     public event Action<BitmapSource>? Preview;
 
-    public void Start() => _worker ??= Task.Run(() => Run(_cts.Token));
+    /// <summary>Запуск. Если передана сохранённая калибровка — сразу начинаем следить, без калибровки.</summary>
+    public void Start(GazeCalibration? calibration = null) => _worker ??= Task.Run(() => Run(calibration, _cts.Token));
 
     /// <summary>Заново запомнить положение «смотрю на экран».</summary>
     public void Recalibrate() => _recalibrate = true;
@@ -54,6 +82,16 @@ public sealed class GazeTracker : IDisposable
         public double FaceH => _faceH / Math.Max(1, Samples);
         public double EyeRate => Samples == 0 ? 0 : (double)EyeHits / Samples;
 
+        public static Baseline From(GazeCalibration c) => new()
+        {
+            Samples = MinCalibrationSamples,
+            EyeHits = (int)Math.Round(c.EyeRate * MinCalibrationSamples),
+            _faceY = c.FaceY * MinCalibrationSamples,
+            _faceH = c.FaceHeight * MinCalibrationSamples,
+        };
+
+        public GazeCalibration ToCalibration() => new() { FaceY = FaceY, FaceHeight = FaceH, EyeRate = EyeRate };
+
         public void Add(double faceY, double faceH, bool eyes)
         {
             Samples++;
@@ -64,7 +102,7 @@ public sealed class GazeTracker : IDisposable
         }
     }
 
-    void Run(CancellationToken ct)
+    void Run(GazeCalibration? initial, CancellationToken ct)
     {
         try
         {
@@ -74,21 +112,21 @@ public sealed class GazeTracker : IDisposable
             if (faceCascade.Empty() || eyeCascade.Empty())
                 throw new InvalidOperationException("Не найдены файлы каскадов в папке Camera.");
 
-            using var capture = new VideoCapture(0, VideoCaptureAPIs.DSHOW);
+            using var capture = new VideoCapture(CameraIndex, VideoCaptureAPIs.DSHOW);
             if (!capture.IsOpened())
-                throw new InvalidOperationException("Камера не найдена или занята другим приложением.");
+                throw new InvalidOperationException($"Камера {CameraIndex + 1} не найдена или занята другим приложением.");
 
             using var frame = new Mat();
             using var small = new Mat();
             using var gray = new Mat();
 
-            var baseline = new Baseline();
+            var baseline = initial != null ? Baseline.From(initial) : new Baseline();
             var votes = new Queue<bool>();
-            bool calibrated = false;
+            bool calibrated = initial != null;
             var calibrationStart = DateTime.UtcNow;
             var lastFaceSeen = DateTime.UtcNow;
             var lastPreview = DateTime.MinValue;
-            SetState(GazeState.Calibrating);
+            SetState(calibrated ? GazeState.OnScreen : GazeState.Calibrating);
 
             while (!ct.IsCancellationRequested)
             {
@@ -144,6 +182,8 @@ public sealed class GazeTracker : IDisposable
                     if ((now - calibrationStart).TotalSeconds >= CalibrationSeconds && baseline.Samples >= MinCalibrationSamples)
                     {
                         calibrated = true;
+                        var result = baseline.ToCalibration();
+                        _dispatcher.BeginInvoke(() => Calibrated?.Invoke(result));
                         SetState(GazeState.OnScreen);
                     }
                 }
@@ -156,6 +196,14 @@ public sealed class GazeTracker : IDisposable
                 else
                 {
                     bool down;
+                    double drop = face != null ? (faceY - baseline.FaceY) / Math.Max(0.01, baseline.FaceH) : 0;
+                    if ((now - _lastMetrics).TotalMilliseconds >= 100)
+                    {
+                        _lastMetrics = now;
+                        bool hasFace = face != null, hasEyes = eyesFound;
+                        _dispatcher.BeginInvoke(() => Metrics?.Invoke(drop, hasFace, hasEyes));
+                    }
+
                     if (face == null)
                     {
                         // Сильно опущенную голову детектор лица уже не находит
@@ -163,8 +211,8 @@ public sealed class GazeTracker : IDisposable
                     }
                     else
                     {
-                        bool headDown = (faceY - baseline.FaceY) / Math.Max(0.01, baseline.FaceH) > HeadDropThreshold;
-                        bool eyesHidden = baseline.EyeRate > 0.6 && !eyesFound;
+                        bool headDown = drop > HeadDropThreshold;
+                        bool eyesHidden = UseEyes && baseline.EyeRate > 0.6 && !eyesFound;
                         down = headDown || eyesHidden;
                     }
 

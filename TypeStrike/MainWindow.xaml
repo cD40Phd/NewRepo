@@ -55,9 +55,9 @@
                 <TextBlock Style="{StaticResource CaptionStyle}" Text="СЛОВА" />
                 <UniformGrid Columns="3">
                     <RadioButton x:Name="LangEn" GroupName="Lang" Style="{StaticResource ChipStyle}"
-                                 Content="English" IsChecked="True" Click="Lang_Click" />
+                                 Content="English" Click="Lang_Click" />
                     <RadioButton x:Name="LangRu" GroupName="Lang" Style="{StaticResource ChipStyle}"
-                                 Content="Русский" Click="Lang_Click" />
+                                 Content="Русский" IsChecked="True" Click="Lang_Click" />
                     <RadioButton x:Name="LangCustom" GroupName="Lang" Style="{StaticResource ChipStyle}"
                                  Content="Свой файл…" Click="LangCustom_Click" />
                 </UniformGrid>
@@ -98,20 +98,12 @@
                 <TextBlock x:Name="DifficultyInfo" FontFamily="Consolas" FontSize="13"
                            Foreground="{StaticResource DimBrush}" Margin="4,4,0,0" />
 
-                <CheckBox x:Name="HintsBox" Content="Подсказка: клавиатура и пальцы" IsChecked="True" Focusable="False"
-                          Foreground="#C8D3EA" FontFamily="Consolas" FontSize="14" Margin="4,16,0,0" />
-                <CheckBox x:Name="CameraBox" Focusable="False" Foreground="#C8D3EA" FontFamily="Consolas"
-                          FontSize="14" Margin="4,8,0,0">
-                    <TextBlock TextWrapping="Wrap">
-                        Камера: следить, чтобы взгляд не уходил на клавиатуру
-                        <Run Foreground="#8FA3C7" FontSize="12" Text="(эксперимент; кадры не сохраняются)" />
-                    </TextBlock>
-                </CheckBox>
-                <CheckBox x:Name="SoundBox" Content="Звуковые эффекты" IsChecked="True" Focusable="False"
-                          Foreground="#C8D3EA" FontFamily="Consolas" FontSize="14" Margin="4,8,0,0" />
-
                 <Button Style="{StaticResource NeonButton}" Margin="0,20,0,6" Click="Start_Click"
                         Content="▶  СТАРТ   [Enter]" />
+                <Button x:Name="ContinueButton" Style="{StaticResource NeonButton}" Click="Continue_Click"
+                        Visibility="Collapsed" />
+                <Button Style="{StaticResource NeonButton}" Click="Settings_Click" FontSize="17"
+                        Content="⚙  НАСТРОЙКИ И КАМЕРА   [F2]" />
                 <TextBlock x:Name="BestText" FontFamily="Consolas" FontSize="14" Foreground="{StaticResource OrangeBrush}"
                            HorizontalAlignment="Center" Margin="0,4,0,0" />
 
@@ -130,12 +122,127 @@
         </Border>
         </ScrollViewer>
 
+        <!-- ───────── Настройки ───────── -->
+        <ScrollViewer x:Name="SettingsPanel" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" Focusable="False"
+                      Visibility="Collapsed">
+        <Border Style="{StaticResource PanelStyle}" Width="680" Margin="20">
+            <StackPanel>
+                <TextBlock Text="НАСТРОЙКИ" FontFamily="Consolas" FontSize="40" FontWeight="Bold"
+                           Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" />
+
+                <TextBlock Style="{StaticResource CaptionStyle}" Text="РАЗМЕР БУКВ" />
+                <UniformGrid Columns="3">
+                    <RadioButton x:Name="SizeNormal" GroupName="Size" Style="{StaticResource ChipStyle}"
+                                 Content="Обычные" Click="TextSize_Click" />
+                    <RadioButton x:Name="SizeLarge" GroupName="Size" Style="{StaticResource ChipStyle}"
+                                 Content="Крупные" Click="TextSize_Click" />
+                    <RadioButton x:Name="SizeHuge" GroupName="Size" Style="{StaticResource ChipStyle}"
+                                 Content="Очень крупные" Click="TextSize_Click" />
+                </UniformGrid>
+                <Border Background="#C0080C1E" CornerRadius="6" Padding="10,4" Margin="0,8,0,0" HorizontalAlignment="Center">
+                    <TextBlock x:Name="SizePreview" FontFamily="Consolas" FontWeight="Bold" Foreground="#F2F6FF">
+                        <Run Foreground="#FF9F1C" Text="кос" /><Run Text="мос" />
+                    </TextBlock>
+                </Border>
+
+                <TextBlock Style="{StaticResource CaptionStyle}" Text="ИГРА" />
+                <CheckBox x:Name="HintsBox" Content="Подсказка: слово, клавиатура и пальцы" Focusable="False"
+                          Foreground="#C8D3EA" FontFamily="Consolas" FontSize="15" Margin="4,2" Click="SettingsChanged" />
+                <CheckBox x:Name="SoundBox" Content="Звуковые эффекты" Focusable="False"
+                          Foreground="#C8D3EA" FontFamily="Consolas" FontSize="15" Margin="4,2" Click="SettingsChanged" />
+
+                <TextBlock Style="{StaticResource CaptionStyle}" Text="КАМЕРА — КОНТРОЛЬ ВЗГЛЯДА" />
+                <CheckBox x:Name="CameraBox" Focusable="False" Foreground="#C8D3EA" FontFamily="Consolas"
+                          FontSize="15" Margin="4,2" Click="CameraBox_Click">
+                    <TextBlock TextWrapping="Wrap">
+                        Следить, чтобы взгляд не уходил на клавиатуру
+                        <Run Foreground="#8FA3C7" FontSize="12" Text="(кадры не сохраняются)" />
+                    </TextBlock>
+                </CheckBox>
+
+                <StackPanel x:Name="CameraSettings">
+                    <DockPanel Margin="0,10,0,0">
+                        <TextBlock Text="Камера:" FontFamily="Consolas" FontSize="14" Foreground="{StaticResource DimBrush}"
+                                   VerticalAlignment="Center" Margin="4,0,10,0" />
+                        <UniformGrid Columns="3">
+                            <RadioButton x:Name="Cam1" GroupName="Cam" Style="{StaticResource ChipStyle}" Content="№ 1" Click="CameraIndex_Click" />
+                            <RadioButton x:Name="Cam2" GroupName="Cam" Style="{StaticResource ChipStyle}" Content="№ 2" Click="CameraIndex_Click" />
+                            <RadioButton x:Name="Cam3" GroupName="Cam" Style="{StaticResource ChipStyle}" Content="№ 3" Click="CameraIndex_Click" />
+                        </UniformGrid>
+                    </DockPanel>
+
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="320" Height="240" Background="#05070F" BorderBrush="#2B3D5E" BorderThickness="1"
+                                CornerRadius="6">
+                            <Grid>
+                                <TextBlock Text="нет изображения" FontFamily="Consolas" FontSize="13"
+                                           Foreground="{StaticResource DimBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <Image x:Name="SettingsCameraImage" Stretch="Uniform" />
+                            </Grid>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="14,0,0,0">
+                            <TextBlock x:Name="SettingsCameraStatus" FontFamily="Consolas" FontSize="17" FontWeight="Bold"
+                                       Foreground="#C8D3EA" TextWrapping="Wrap" />
+                            <TextBlock Text="Наклон головы" FontFamily="Consolas" FontSize="13"
+                                       Foreground="{StaticResource DimBrush}" Margin="0,12,0,3" />
+                            <Grid x:Name="DropBar" Height="14" Background="#141B2B">
+                                <Rectangle x:Name="DropFill" HorizontalAlignment="Left" Width="0" Fill="#5CE1FF" />
+                                <Rectangle x:Name="DropMarker" HorizontalAlignment="Left" Width="3" Fill="#FF9F1C" />
+                            </Grid>
+                            <TextBlock x:Name="MetricsText" FontFamily="Consolas" FontSize="13" Foreground="#C8D3EA"
+                                       TextWrapping="Wrap" Margin="0,6,0,0" />
+                            <Button Style="{StaticResource NeonButton}" FontSize="16" Margin="0,12,0,0"
+                                    Content="◎  КАЛИБРОВАТЬ" Click="Calibrate_Click" />
+                        </StackPanel>
+                    </Grid>
+
+                    <DockPanel Margin="0,14,0,0">
+                        <TextBlock x:Name="SensitivityText" DockPanel.Dock="Top" FontFamily="Consolas" FontSize="14"
+                                   Foreground="#C8D3EA" Margin="4,0,0,4" />
+                        <TextBlock DockPanel.Dock="Left" Text="ниже" FontFamily="Consolas" FontSize="12"
+                                   Foreground="{StaticResource DimBrush}" VerticalAlignment="Center" Margin="4,0,8,0" />
+                        <TextBlock DockPanel.Dock="Right" Text="выше" FontFamily="Consolas" FontSize="12"
+                                   Foreground="{StaticResource DimBrush}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                        <Slider x:Name="SensitivitySlider" Minimum="0" Maximum="100" SmallChange="5" LargeChange="10"
+                                Focusable="False" ValueChanged="Sensitivity_Changed" />
+                    </DockPanel>
+                    <CheckBox x:Name="UseEyesBox" Content="Учитывать глаза (веки прикрываются, когда смотрят вниз)"
+                              Focusable="False" Foreground="#C8D3EA" FontFamily="Consolas" FontSize="14" Margin="4,8,0,2"
+                              Click="CameraOption_Click" />
+                    <CheckBox x:Name="CalibrateEachGameBox" Content="Калибровать в начале каждой игры"
+                              Focusable="False" Foreground="#C8D3EA" FontFamily="Consolas" FontSize="14" Margin="4,2"
+                              Click="CameraOption_Click" />
+
+                    <TextBlock FontFamily="Consolas" FontSize="13" Foreground="{StaticResource DimBrush}"
+                               TextWrapping="Wrap" LineHeight="19" Margin="4,10,0,0">
+                        <Run Foreground="White" Text="Как настроить:" />
+                        <LineBreak />
+                        <Run Text="1. Сядьте как обычно, положите пальцы на основной ряд и смотрите на экран — нажмите «Калибровать» и не двигайтесь 3 секунды." />
+                        <LineBreak />
+                        <Run Text="2. Посмотрите на клавиатуру — статус должен смениться на «взгляд на клавиатуре», а полоса наклона — зайти за оранжевую метку." />
+                        <LineBreak />
+                        <Run Text="3. Не срабатывает — повысьте чувствительность. Срабатывает зря — понизьте её или отключите учёт глаз." />
+                    </TextBlock>
+                </StackPanel>
+
+                <Button Style="{StaticResource NeonButton}" Margin="0,20,0,0" Content="ГОТОВО  [Esc]"
+                        Click="SettingsDone_Click" />
+            </StackPanel>
+        </Border>
+        </ScrollViewer>
+
         <!-- ───────── Пауза ───────── -->
         <Border x:Name="PausePanel" Grid.RowSpan="2" Style="{StaticResource PanelStyle}" Width="380" Visibility="Collapsed">
             <StackPanel>
                 <TextBlock Text="ПАУЗА" FontFamily="Consolas" FontSize="44" FontWeight="Bold"
                            Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" Margin="0,0,0,16" />
                 <Button Style="{StaticResource NeonButton}" Content="ПРОДОЛЖИТЬ  [Esc]" Click="Resume_Click" />
+                <Button x:Name="PauseCalibrateButton" Style="{StaticResource NeonButton}" Content="КАЛИБРОВАТЬ КАМЕРУ  [F5]"
+                        Click="PauseCalibrate_Click" Visibility="Collapsed" />
                 <Button Style="{StaticResource NeonButton}" Content="В МЕНЮ" Click="Menu_Click" />
             </StackPanel>
         </Border>
@@ -160,6 +267,8 @@
                            TextWrapping="Wrap" Margin="0,8,0,10" />
                 <Button x:Name="NextLessonButton" Style="{StaticResource NeonButton}" Content="СЛЕДУЮЩИЙ УРОК  [Enter]"
                         Click="NextLesson_Click" Visibility="Collapsed" />
+                <Button x:Name="ContinueOverButton" Style="{StaticResource NeonButton}" Click="Continue_Click"
+                        Visibility="Collapsed" />
                 <Button x:Name="RestartButton" Style="{StaticResource NeonButton}" Content="ИГРАТЬ СНОВА  [Enter]" Click="Start_Click" />
                 <Button Style="{StaticResource NeonButton}" Content="В МЕНЮ  [Esc]" Click="Menu_Click" />
             </StackPanel>

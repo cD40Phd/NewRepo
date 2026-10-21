@@ -52,6 +52,9 @@ public sealed class GameView : FrameworkElement
 
     public GameEngine? Engine { get; set; }
 
+    /// <summary>Масштаб слов на врагах (настройка «Размер букв»).</summary>
+    public double TextScale { get; set; } = 1.4;
+
     protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
     {
         base.OnRenderSizeChanged(sizeInfo);
@@ -163,14 +166,15 @@ public sealed class GameView : FrameworkElement
 
     void DrawLabel(DrawingContext dc, Enemy e, bool isTarget, double width)
     {
-        if (e.Label == null || e.LabelTyped != e.Typed)
+        if (e.Label == null || e.LabelTyped != e.Typed || e.LabelScale != TextScale)
         {
-            double size = e.Kind switch { EnemyKind.Boss => 21, EnemyKind.Mite => 14, _ => 16 };
+            double size = TextScale * e.Kind switch { EnemyKind.Boss => 21, EnemyKind.Mite => 14, _ => 16 };
             var text = new FormattedText(e.Word, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Mono, size, TextBrush, _dip);
             if (e.Typed > 0)
                 text.SetForegroundBrush(TypedBrush, 0, e.Typed);
             e.Label = text;
             e.LabelTyped = e.Typed;
+            e.LabelScale = TextScale;
         }
 
         var ft = e.Label;

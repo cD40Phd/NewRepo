@@ -150,6 +150,8 @@ public sealed class GameEngine
     public double HintTime { get; private set; }
 
     public event Action<GameResult>? GameOver;
+    /// <summary>Волна свободной игры пройдена: (номер волны, счёт) — для сохранения уровня.</summary>
+    public event Action<int, int>? WaveCompleted;
     public Action<Sfx>? PlaySound { get; set; }
 
     public int Multiplier => 1 + Math.Min(Combo / 20, 4);
@@ -190,7 +192,8 @@ public sealed class GameEngine
         ShipAngle = 0;
     }
 
-    public void Start(WordBank words, Difficulty difficulty, LessonPlan? lesson = null)
+    /// <param name="startWave">Последняя пройденная волна при продолжении сохранённой игры.</param>
+    public void Start(WordBank words, Difficulty difficulty, LessonPlan? lesson = null, int startWave = 0, int startScore = 0)
     {
         Reset();
         _lesson = lesson;
@@ -204,10 +207,17 @@ public sealed class GameEngine
             _phaseTimer = 3.5;
             ShowBanner(lesson.Lesson.Title.ToUpperInvariant(), lesson.Lesson.Tip, 3.5, CyanColor);
         }
+        else if (startWave > 0)
+        {
+            Wave = startWave;
+            Score = startScore;
+            _phaseTimer = 2.5;
+            ShowBanner($"ПРОДОЛЖАЕМ С ВОЛНЫ {startWave + 1}", "уровень загружен", 2.5, CyanColor);
+        }
         else
         {
-            _phaseTimer = 1.8;
-            ShowBanner("ПРИГОТОВЬТЕСЬ", "первая буква слова захватывает цель", 1.8, CyanColor);
+            _phaseTimer = 2.5;
+            ShowBanner("ПРИГОТОВЬТЕСЬ", "первая буква слова захватывает цель", 2.5, CyanColor);
         }
     }
 
@@ -629,6 +639,7 @@ public sealed class GameEngine
 
         ShowBanner($"ВОЛНА {Wave} ПРОЙДЕНА", subtitle, 2.8, GreenColor);
         PlaySound?.Invoke(Sfx.WaveClear);
+        WaveCompleted?.Invoke(Wave, Score);
     }
 
     void Spawn(EnemyKind kind)

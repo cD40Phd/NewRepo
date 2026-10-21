@@ -65,6 +65,7 @@ public sealed class Enemy
     // Кэш отрисовки подписи
     internal FormattedText? Label;
     internal int LabelTyped = -1;
+    internal double LabelScale;
 }
 
 public sealed class Bullet

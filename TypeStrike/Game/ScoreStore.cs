@@ -16,6 +16,14 @@ public sealed class LessonAttempt
 /// <summary>Прогресс освоения урока: серия зачётов подряд и стабильность скорости.</summary>
 public sealed record LessonMastery(int Streak, bool StableSpeed, bool Mastered);
 
+/// <summary>Сохранённый уровень свободной игры: последняя пройденная волна и счёт.</summary>
+public sealed class Checkpoint
+{
+    public int Wave { get; set; }
+    public int Score { get; set; }
+    public DateTime Date { get; set; }
+}
+
 public sealed class BestScore
 {
     public int Score { get; set; }
@@ -34,6 +42,8 @@ public sealed class ScoreStore
     public Dictionary<string, BestScore> Best { get; set; } = new();
     /// <summary>Лучшее количество звёзд за урок (ключ — LessonPlan.Key).</summary>
     public Dictionary<string, int> LessonStars { get; set; } = new();
+    /// <summary>Сохранённые уровни свободной игры (ключ — набор слов и сложность).</summary>
+    public Dictionary<string, Checkpoint> Checkpoints { get; set; } = new();
     /// <summary>Последние попытки каждого урока.</summary>
     public Dictionary<string, List<LessonAttempt>> LessonHistory { get; set; } = new();
     /// <summary>Освоенные уроки — после освоения открывается следующая буква.</summary>
@@ -84,6 +94,17 @@ public sealed class ScoreStore
             LessonStars[lessonKey] = stars;
             Save();
         }
+    }
+
+    public Checkpoint? GetCheckpoint(string key) => Checkpoints.GetValueOrDefault(key);
+
+    /// <summary>Запоминает пройденную волну, если она дальше уже сохранённой.</summary>
+    public void SaveCheckpoint(string key, int wave, int score)
+    {
+        if (Checkpoints.TryGetValue(key, out var existing) && existing.Wave >= wave)
+            return;
+        Checkpoints[key] = new Checkpoint { Wave = wave, Score = score, Date = DateTime.Now };
+        Save();
     }
 
     public bool IsMastered(string lessonKey) => MasteredLessons.Contains(lessonKey);
