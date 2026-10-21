@@ -14,7 +14,10 @@ namespace TypeStrike;
 
 public partial class MainWindow : Window
 {
-    enum Screen { Menu, Settings, Game, Paused, GameOver }
+    enum Screen { Menu, Settings, Calibrating, Game, Paused, GazePaused, GameOver }
+
+    /// <summary>С какой волны отведённый от экрана взгляд ставит игру на паузу.</summary>
+    const int GazePauseFromWave = 2;
 
     const double MinHeadDrop = 0.10;
     const double MaxHeadDrop = 0.40;
@@ -32,8 +35,15 @@ public partial class MainWindow : Window
     LessonPlan? _currentPlan;
     GazeTracker? _gaze;
     bool _loadingSettings;
-    DispatcherTimer? _countdown;
     DateTime _calibrationSavedAt;
+    CalibrationRoutine? _calibration;
+    readonly List<GazeSample> _calibrationSamples = new();
+    int _calibrationFaceFrames;
+    int _calibrationEyeFrames;
+    bool _calibrationFailed;
+    Action? _afterCalibration;
+    Action? _cancelCalibration;
+    DispatcherTimer? _gazeResumeTimer;
 
     public MainWindow()
     {
@@ -72,8 +82,10 @@ public partial class MainWindow : Window
         double dt = Math.Min(now - _previousTime, 0.05);
         _previousTime = now;
 
-        if (_screen != Screen.Paused)
+        if (_screen is not (Screen.Paused or Screen.GazePaused or Screen.Calibrating))
             _engine.Update(dt);
+        if (_calibration != null)
+            UpdateCalibration(dt);
         View.InvalidateVisual();
         if (Hints.Visibility == Visibility.Visible)
             Hints.InvalidateVisual();
@@ -106,6 +118,23 @@ public partial class MainWindow : Window
                 }
                 break;
 
+            case Screen.Calibrating:
+                e.Handled = true;
+                if (e.Key == Key.Escape)
+                    CancelCalibration();
+                else if (e.Key == Key.Enter && _calibrationFailed)
+                    RestartCalibration();
+                break;
+
+            case Screen.GazePaused:
+                e.Handled = true;
+                if (e.Key == Key.Escape)
+                {
+                    HideGazePause();
+                    Pause();
+                }
+                break;
+
             case Screen.Game:
                 switch (e.Key)
                 {
@@ -122,7 +151,11 @@ public partial class MainWindow : Window
                         e.Handled = true;
                         break;
                     case Key.F5:
-                        _gaze?.Recalibrate();
+                        if (_gaze != null)
+                        {
+                            Pause();
+                            CalibrateFromPause();
+                        }
                         e.Handled = true;
                         break;
                     case Key.Space:
@@ -138,9 +171,9 @@ public partial class MainWindow : Window
                     Resume();
                     e.Handled = true;
                 }
-                else if (e.Key == Key.F5)
+                else if (e.Key == Key.F5 && _gaze != null)
                 {
-                    _gaze?.Recalibrate();
+                    CalibrateFromPause();
                     e.Handled = true;
                 }
                 break;
@@ -181,6 +214,30 @@ public partial class MainWindow : Window
     /// <param name="resume">Продолжить свободную игру с сохранённой волны.</param>
     void StartGame(bool resume = false)
     {
+        bool needsCalibration = _settings.CameraEnabled &&
+            (_settings.CalibrateEachGame || _settings.Calibration?.HasModel(GazeModel.FeatureCount) != true);
+        if (needsCalibration)
+        {
+            HideAllPanels();
+            BeginCalibration(() => LaunchGame(resume), ShowMenu);
+        }
+        else
+        {
+            LaunchGame(resume);
+        }
+    }
+
+    void HideAllPanels()
+    {
+        MenuPanel.Visibility = Visibility.Collapsed;
+        SettingsPanel.Visibility = Visibility.Collapsed;
+        PausePanel.Visibility = Visibility.Collapsed;
+        GameOverPanel.Visibility = Visibility.Collapsed;
+        GazePausePanel.Visibility = Visibility.Collapsed;
+    }
+
+    void LaunchGame(bool resume)
+    {
         var bank = SelectedBank();
         var difficulty = SelectedDifficulty();
         _sound.Enabled = _settings.Sound;
@@ -194,7 +251,7 @@ public partial class MainWindow : Window
         Hints.Visibility = _settings.KeyboardHint ? Visibility.Visible : Visibility.Collapsed;
         if (_settings.CameraEnabled)
         {
-            StartCamera(calibrate: _settings.CalibrateEachGame || _settings.Calibration == null);
+            StartCamera();
             CameraPanel.Visibility = Visibility.Visible;
         }
         else
@@ -211,6 +268,7 @@ public partial class MainWindow : Window
 
     void Pause()
     {
+        HideGazePause();
         _screen = Screen.Paused;
         PauseCalibrateButton.Visibility = _gaze != null ? Visibility.Visible : Visibility.Collapsed;
         PausePanel.Visibility = Visibility.Visible;
@@ -226,6 +284,7 @@ public partial class MainWindow : Window
     void ShowMenu()
     {
         _engine.Reset();
+        HideGazePause();
         StopCamera();
         Hints.Visibility = Visibility.Collapsed;
         PausePanel.Visibility = Visibility.Collapsed;
@@ -404,58 +463,44 @@ public partial class MainWindow : Window
 
     double HeadDropThreshold => Math.Clamp(_settings.CameraSensitivity, MinHeadDrop, MaxHeadDrop);
 
-    /// <param name="calibrate">Откалибровать заново; иначе используется сохранённая калибровка.</param>
-    void StartCamera(bool calibrate)
+    void StartCamera()
     {
         if (_gaze != null && _gaze.CameraIndex != _settings.CameraIndex)
             StopCamera();
+        if (_gaze != null)
+            return;
 
-        if (_gaze == null)
+        var tracker = new GazeTracker(Dispatcher, _settings.CameraIndex)
         {
-            var tracker = new GazeTracker(Dispatcher, _settings.CameraIndex)
-            {
-                HeadDropThreshold = HeadDropThreshold,
-                UseEyes = _settings.CameraUseEyes,
-            };
-            // События уже остановленного трекера могут прийти позже — игнорируем их
-            tracker.StateChanged += state =>
-            {
-                if (_gaze == tracker)
-                    OnGazeStateChanged(state);
-            };
-            tracker.Preview += bitmap =>
-            {
-                if (_gaze != tracker)
-                    return;
-                CameraImage.Source = bitmap;
-                SettingsCameraImage.Source = bitmap;
-            };
-            tracker.Metrics += (drop, face, eyes) =>
-            {
-                if (_gaze == tracker)
-                    OnGazeMetrics(drop, face, eyes);
-            };
-            tracker.Calibrated += calibration =>
-            {
-                if (_gaze != tracker)
-                    return;
-                _settings.Calibration = calibration;
-                _settings.Save();
-                _calibrationSavedAt = DateTime.Now;
-            };
-            _gaze = tracker;
-            OnGazeStateChanged(GazeState.Starting);
-            tracker.Start(calibrate ? null : _settings.Calibration);
-        }
-        else if (calibrate)
+            HeadDropThreshold = HeadDropThreshold,
+            UseEyes = _settings.CameraUseEyes,
+        };
+        // События уже остановленного трекера могут прийти позже — игнорируем их
+        tracker.StateChanged += state =>
         {
-            _gaze.Recalibrate();
-        }
+            if (_gaze == tracker)
+                OnGazeStateChanged(state);
+        };
+        tracker.Preview += bitmap =>
+        {
+            if (_gaze != tracker)
+                return;
+            CameraImage.Source = bitmap;
+            SettingsCameraImage.Source = bitmap;
+        };
+        tracker.Frame += frame =>
+        {
+            if (_gaze == tracker)
+                OnGazeFrame(frame);
+        };
+        _gaze = tracker;
+        OnGazeStateChanged(GazeState.Starting);
+        tracker.Start(_settings.Calibration);
     }
 
     void StopCamera()
     {
-        _countdown?.Stop();
+        _gazeResumeTimer?.Stop();
         _gaze?.Dispose();
         _gaze = null;
         _engine.SetLookingDown(false);
@@ -465,6 +510,7 @@ public partial class MainWindow : Window
         SettingsCameraStatus.Text = _settings.CameraEnabled ? "Камера выключена" : "Включите камеру, чтобы настроить её";
         MetricsText.Text = "";
         DropFill.Width = 0;
+        GazeDot.Visibility = Visibility.Hidden;
     }
 
     void OnGazeStateChanged(GazeState state)
@@ -472,33 +518,236 @@ public partial class MainWindow : Window
         string text = state switch
         {
             GazeState.Starting => "Включаю камеру…",
-            GazeState.Calibrating => "Калибровка: смотрите на экран",
+            GazeState.NeedsCalibration => "Нужна калибровка взгляда",
             GazeState.OnScreen => "✔ Взгляд на экране",
-            GazeState.LookingDown => "👀 Взгляд на клавиатуре!",
+            GazeState.LookingAway => "👀 Взгляд не на экране!",
             GazeState.NoFace => "Лицо не в кадре",
             _ => "Камера недоступна: " + _gaze?.ErrorMessage,
         };
         var brush = (Brush)new BrushConverter().ConvertFromString(state switch
         {
             GazeState.OnScreen => "#6BFFB0",
-            GazeState.LookingDown or GazeState.Error => "#FF9F1C",
+            GazeState.LookingAway or GazeState.Error or GazeState.NeedsCalibration => "#FF9F1C",
             _ => "#C8D3EA",
         })!;
         CameraStatus.Text = SettingsCameraStatus.Text = text;
         CameraStatus.Foreground = SettingsCameraStatus.Foreground = brush;
-        _engine.SetLookingDown(state == GazeState.LookingDown);
+
+        bool away = state == GazeState.LookingAway;
+        _engine.SetLookingDown(away);
+
+        // Со второй волны взгляд мимо экрана ставит игру на паузу
+        if (away && _screen == Screen.Game && _engine.Phase == Phase.Fighting && _engine.Wave >= GazePauseFromWave)
+            ShowGazePause();
+        else if (state == GazeState.OnScreen && _screen == Screen.GazePaused)
+            ScheduleGazeResume();
+        else if (_screen == Screen.GazePaused)
+        {
+            _gazeResumeTimer?.Stop();
+            GazeResumeText.Text = "";
+        }
     }
 
-    void OnGazeMetrics(double drop, bool face, bool eyes)
+    void OnGazeFrame(GazeFrame frame)
     {
+        if (_calibration is { Collecting: true } routine && !_calibrationFailed)
+        {
+            if (frame.Face)
+            {
+                _calibrationFaceFrames++;
+                if (frame.Eyes)
+                    _calibrationEyeFrames++;
+            }
+            if (frame.Features != null)
+            {
+                var (x, y) = routine.Target;
+                _calibrationSamples.Add(new GazeSample(frame.Features, x, y, frame.FaceY, frame.FaceHeight));
+            }
+        }
+
+        if (_screen != Screen.Settings)
+            return;
+
         double width = DropBar.ActualWidth;
-        DropFill.Width = Math.Clamp(drop / 0.5, 0, 1) * width;
+        DropFill.Width = Math.Clamp(frame.HeadDrop / 0.5, 0, 1) * width;
         DropMarker.Margin = new Thickness(Math.Clamp(HeadDropThreshold / 0.5, 0, 1) * width, 0, 0, 0);
-        DropFill.Fill = (Brush)new BrushConverter().ConvertFromString(drop > HeadDropThreshold ? "#FF9F1C" : "#5CE1FF")!;
-        MetricsText.Text = $"наклон {Math.Max(0, drop):0.00} · порог {HeadDropThreshold:0.00}\n" +
-                           $"лицо: {(face ? "видно" : "не видно")} · глаза: {(eyes ? "видны" : "не видны")}" +
-                           ((DateTime.Now - _calibrationSavedAt).TotalSeconds < 4 ? "\n✔ калибровка сохранена" : "");
+        DropFill.Fill = (Brush)new BrushConverter().ConvertFromString(frame.HeadDrop > HeadDropThreshold ? "#FF9F1C" : "#5CE1FF")!;
+
+        string gaze = frame.HasGaze ? $"взгляд ({frame.GazeX:0.00}; {frame.GazeY:0.00})" : "взгляд: —";
+        MetricsText.Text = $"наклон {Math.Max(0, frame.HeadDrop):0.00} · порог {HeadDropThreshold:0.00}\n" +
+                           $"лицо: {(frame.Face ? "видно" : "не видно")} · глаза: {(frame.Eyes ? "видны" : "не видны")}\n{gaze}" +
+                           ((DateTime.Now - _calibrationSavedAt).TotalSeconds < 5 ? "\n✔ калибровка сохранена" : "");
+
+        // Схема: рамка экрана 140×80 со сдвигом (30; 15) на холсте 200×130
+        if (frame.HasGaze)
+        {
+            double gx = 30 + Math.Clamp(frame.GazeX, -0.2, 1.2) * 140;
+            double gy = 15 + Math.Clamp(frame.GazeY, -0.18, 1.35) * 80;
+            Canvas.SetLeft(GazeDot, gx - GazeDot.Width / 2);
+            Canvas.SetTop(GazeDot, gy - GazeDot.Height / 2);
+            GazeDot.Fill = (Brush)new BrushConverter().ConvertFromString(
+                GazeTracker.IsOffScreen(frame.GazeX, frame.GazeY) ? "#FF4D6D" : "#FF9F1C")!;
+            GazeDot.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            GazeDot.Visibility = Visibility.Hidden;
+        }
     }
+
+    // ───────────────────────────── Пауза по взгляду ─────────────────────────────
+
+    void ShowGazePause()
+    {
+        _screen = Screen.GazePaused;
+        GazeResumeText.Text = "";
+        GazePausePanel.Visibility = Visibility.Visible;
+        ((System.Windows.Media.Animation.Storyboard)FindResource("GazeWarnStoryboard")).Begin(this, true);
+        _sound.Play(Sfx.Miss);
+    }
+
+    void HideGazePause()
+    {
+        _gazeResumeTimer?.Stop();
+        ((System.Windows.Media.Animation.Storyboard)FindResource("GazeWarnStoryboard")).Stop(this);
+        GazePausePanel.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Взгляд вернулся — продолжаем через секунду, если он так и останется на экране.</summary>
+    void ScheduleGazeResume()
+    {
+        GazeResumeText.Text = "Отлично! Продолжаем…";
+        _gazeResumeTimer?.Stop();
+        _gazeResumeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _gazeResumeTimer.Tick += (_, _) =>
+        {
+            _gazeResumeTimer?.Stop();
+            if (_screen != Screen.GazePaused || _gaze?.State != GazeState.OnScreen)
+                return;
+            HideGazePause();
+            _screen = Screen.Game;
+            Keyboard.Focus(View);
+        };
+        _gazeResumeTimer.Start();
+    }
+
+    // ───────────────────────────── Калибровка взгляда ─────────────────────────────
+
+    /// <summary>Калибровка по движущейся точке: игрок следит за ней глазами ~20 секунд.</summary>
+    void BeginCalibration(Action onSuccess, Action onCancel)
+    {
+        StartCamera();
+        _afterCalibration = onSuccess;
+        _cancelCalibration = onCancel;
+        CameraPanel.Visibility = Visibility.Collapsed;
+        CalibrationLayer.Visibility = Visibility.Visible;
+        _screen = Screen.Calibrating;
+        RestartCalibration();
+    }
+
+    void RestartCalibration()
+    {
+        _calibration = new CalibrationRoutine();
+        _calibrationSamples.Clear();
+        _calibrationFaceFrames = _calibrationEyeFrames = 0;
+        _calibrationFailed = false;
+        CalibDot.Visibility = CalibGlow.Visibility = CalibCenter.Visibility = Visibility.Visible;
+        UpdateCalibration(0);
+    }
+
+    void UpdateCalibration(double dt)
+    {
+        var routine = _calibration!;
+        if (_calibrationFailed)
+            return;
+        routine.Update(dt);
+
+        double w = CalibCanvas.ActualWidth, h = CalibCanvas.ActualHeight;
+        var (tx, ty) = routine.Target;
+        double pulse = routine.Dwelling ? 0.75 + 0.25 * Math.Cos(routine.Time * 9) : 1;
+        double dot = 34 * pulse;
+        Place(CalibGlow, tx * w, ty * h, 90);
+        Place(CalibDot, tx * w, ty * h, dot);
+        Place(CalibCenter, tx * w, ty * h, 8);
+        CalibProgress.Width = routine.Progress * ActualWidth;
+
+        CalibTitle.Text = routine.IsIntro ? $"КАЛИБРОВКА ВЗГЛЯДА · {routine.IntroCountdown}" : "СЛЕДИТЕ ЗА ТОЧКОЙ";
+        CalibInfo.Text = routine.IsIntro
+            ? "Сядьте как при игре, пальцы на основном ряду. Следите глазами за оранжевой точкой, голову держите ровно. Esc — отмена."
+            : _gaze?.State == GazeState.Error
+                ? "Камера недоступна: " + _gaze.ErrorMessage
+                : $"Кадров записано: {_calibrationSamples.Count}";
+
+        if (routine.IsDone)
+            FinishCalibration();
+    }
+
+    static void Place(FrameworkElement element, double x, double y, double size)
+    {
+        element.Width = element.Height = size;
+        Canvas.SetLeft(element, x - size / 2);
+        Canvas.SetTop(element, y - size / 2);
+    }
+
+    void FinishCalibration()
+    {
+        double eyeRate = _calibrationFaceFrames == 0 ? 0 : (double)_calibrationEyeFrames / _calibrationFaceFrames;
+        var calibration = GazeModel.Fit(_calibrationSamples, eyeRate, out var error);
+        if (calibration == null)
+        {
+            _calibrationFailed = true;
+            CalibDot.Visibility = CalibGlow.Visibility = CalibCenter.Visibility = Visibility.Hidden;
+            CalibTitle.Text = "НЕ УДАЛОСЬ ОТКАЛИБРОВАТЬ";
+            CalibInfo.Text = error + "\n\nEnter — повторить, Esc — отмена";
+            return;
+        }
+
+        _settings.Calibration = calibration;
+        _settings.Save();
+        _calibrationSavedAt = DateTime.Now;
+        _gaze?.SetCalibration(calibration);
+
+        _calibration = null;
+        CalibDot.Visibility = CalibGlow.Visibility = CalibCenter.Visibility = Visibility.Hidden;
+        CalibTitle.Text = "ГОТОВО!";
+        CalibInfo.Text = $"Средняя ошибка ≈ {calibration.Error * 100:0}% экрана" +
+                         (calibration.Error > 0.2 ? " — неточно: попробуйте при лучшем свете и не двигая головой" : "");
+
+        var done = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.6) };
+        done.Tick += (_, _) =>
+        {
+            done.Stop();
+            CloseCalibrationLayer();
+            var next = _afterCalibration;
+            _afterCalibration = _cancelCalibration = null;
+            next?.Invoke();
+        };
+        done.Start();
+    }
+
+    void CancelCalibration()
+    {
+        CloseCalibrationLayer();
+        var cancel = _cancelCalibration;
+        _afterCalibration = _cancelCalibration = null;
+        cancel?.Invoke();
+    }
+
+    void CloseCalibrationLayer()
+    {
+        _calibration = null;
+        _calibrationFailed = false;
+        CalibrationLayer.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Калибровка из паузы (F5) — после неё возвращаемся на паузу.</summary>
+    void CalibrateFromPause()
+    {
+        PausePanel.Visibility = Visibility.Collapsed;
+        BeginCalibration(Pause, Pause);
+    }
+
+    void PauseCalibrate_Click(object sender, RoutedEventArgs e) => CalibrateFromPause();
 
     // ───────────────────────────── Настройки ─────────────────────────────
 
@@ -547,7 +796,7 @@ public partial class MainWindow : Window
         SettingsPanel.Visibility = Visibility.Visible;
         _screen = Screen.Settings;
         if (_settings.CameraEnabled)
-            StartCamera(calibrate: _settings.Calibration == null);
+            StartCamera();
         else
             StopCamera();
     }
@@ -584,7 +833,7 @@ public partial class MainWindow : Window
         _settings.Save();
         CameraSettings.IsEnabled = _settings.CameraEnabled;
         if (_settings.CameraEnabled)
-            StartCamera(calibrate: _settings.Calibration == null);
+            StartCamera();
         else
             StopCamera();
     }
@@ -597,7 +846,7 @@ public partial class MainWindow : Window
         _settings.Save();
         StopCamera();
         if (_settings.CameraEnabled)
-            StartCamera(calibrate: true);
+            StartCamera();
     }
 
     void Sensitivity_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -620,32 +869,19 @@ public partial class MainWindow : Window
             _gaze.UseEyes = _settings.CameraUseEyes;
     }
 
-    /// <summary>Отсчёт 3-2-1, чтобы игрок успел сесть ровно и посмотреть на экран.</summary>
     void Calibrate_Click(object sender, RoutedEventArgs e)
     {
         if (!_settings.CameraEnabled)
             return;
-        StartCamera(calibrate: false);
-
-        int seconds = 3;
-        _countdown?.Stop();
-        _countdown = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        SettingsCameraStatus.Text = $"Смотрите на экран… {seconds}";
-        _countdown.Tick += (_, _) =>
-        {
-            seconds--;
-            if (seconds > 0)
-            {
-                SettingsCameraStatus.Text = $"Смотрите на экран… {seconds}";
-                return;
-            }
-            _countdown?.Stop();
-            _gaze?.Recalibrate();
-        };
-        _countdown.Start();
+        SettingsPanel.Visibility = Visibility.Collapsed;
+        BeginCalibration(ReturnToSettings, ReturnToSettings);
     }
 
-    void PauseCalibrate_Click(object sender, RoutedEventArgs e) => _gaze?.Recalibrate();
+    void ReturnToSettings()
+    {
+        SettingsPanel.Visibility = Visibility.Visible;
+        _screen = Screen.Settings;
+    }
 
     // ───────────────────────────── Меню ─────────────────────────────
 

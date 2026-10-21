@@ -8,6 +8,29 @@
         Background="#03040C"
         PreviewKeyDown="Window_PreviewKeyDown"
         PreviewTextInput="Window_PreviewTextInput">
+    <Window.Resources>
+        <!-- Анимация предупреждения: глаз поднимает взгляд, стрелка зовёт наверх, текст пульсирует -->
+        <Storyboard x:Key="GazeWarnStoryboard" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetName="IrisShift" Storyboard.TargetProperty="Y"
+                             From="26" To="-20" Duration="0:0:0.9" AutoReverse="True">
+                <DoubleAnimation.EasingFunction>
+                    <SineEase EasingMode="EaseInOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation Storyboard.TargetName="ArrowShift" Storyboard.TargetProperty="Y"
+                             From="18" To="-12" Duration="0:0:0.6" AutoReverse="True">
+                <DoubleAnimation.EasingFunction>
+                    <QuadraticEase EasingMode="EaseOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation Storyboard.TargetName="GazeWarnText" Storyboard.TargetProperty="Opacity"
+                             From="1" To="0.35" Duration="0:0:0.5" AutoReverse="True" />
+            <DoubleAnimation Storyboard.TargetName="GazeWarnScale" Storyboard.TargetProperty="ScaleX"
+                             From="1" To="1.06" Duration="0:0:0.5" AutoReverse="True" />
+            <DoubleAnimation Storyboard.TargetName="GazeWarnScale" Storyboard.TargetProperty="ScaleY"
+                             From="1" To="1.06" Duration="0:0:0.5" AutoReverse="True" />
+        </Storyboard>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -195,8 +218,17 @@
                             </Grid>
                             <TextBlock x:Name="MetricsText" FontFamily="Consolas" FontSize="13" Foreground="#C8D3EA"
                                        TextWrapping="Wrap" Margin="0,6,0,0" />
+                            <TextBlock Text="Куда вы смотрите (рамка — экран)" FontFamily="Consolas" FontSize="13"
+                                       Foreground="{StaticResource DimBrush}" Margin="0,10,0,3" />
+                            <Canvas x:Name="GazeMap" Width="200" Height="130" Background="#05070F" HorizontalAlignment="Left">
+                                <Rectangle Canvas.Left="30" Canvas.Top="15" Width="140" Height="80"
+                                           Stroke="#5CE1FF" StrokeThickness="1.5" />
+                                <TextBlock Canvas.Left="62" Canvas.Top="108" Text="клавиатура" FontFamily="Consolas"
+                                           FontSize="11" Foreground="{StaticResource DimBrush}" />
+                                <Ellipse x:Name="GazeDot" Width="12" Height="12" Fill="#FF9F1C" Visibility="Hidden" />
+                            </Canvas>
                             <Button Style="{StaticResource NeonButton}" FontSize="16" Margin="0,12,0,0"
-                                    Content="◎  КАЛИБРОВАТЬ" Click="Calibrate_Click" />
+                                    Content="◎  КАЛИБРОВКА ВЗГЛЯДА" Click="Calibrate_Click" />
                         </StackPanel>
                     </Grid>
 
@@ -221,11 +253,11 @@
                                TextWrapping="Wrap" LineHeight="19" Margin="4,10,0,0">
                         <Run Foreground="White" Text="Как настроить:" />
                         <LineBreak />
-                        <Run Text="1. Сядьте как обычно, положите пальцы на основной ряд и смотрите на экран — нажмите «Калибровать» и не двигайтесь 3 секунды." />
+                        <Run Text="1. Сядьте как при игре, пальцы на основном ряду. Нажмите «Калибровка взгляда» и следите глазами за летающей точкой (~20 секунд), голову держите ровно." />
                         <LineBreak />
-                        <Run Text="2. Посмотрите на клавиатуру — статус должен смениться на «взгляд на клавиатуре», а полоса наклона — зайти за оранжевую метку." />
+                        <Run Text="2. Проверка: смотрите в разные места экрана — оранжевая точка на схеме должна ходить внутри рамки. Посмотрите на клавиатуру — точка уйдёт вниз, статус сменится на «взгляд не на экране»." />
                         <LineBreak />
-                        <Run Text="3. Не срабатывает — повысьте чувствительность. Срабатывает зря — понизьте её или отключите учёт глаз." />
+                        <Run Text="3. Не срабатывает — повысьте чувствительность. Срабатывает зря — понизьте её, отключите учёт глаз или откалибруйтесь при лучшем свете." />
                     </TextBlock>
                 </StackPanel>
 
@@ -234,6 +266,74 @@
             </StackPanel>
         </Border>
         </ScrollViewer>
+
+        <!-- ───────── Калибровка взгляда ───────── -->
+        <Grid x:Name="CalibrationLayer" Grid.RowSpan="2" Background="#F705070F" Visibility="Collapsed">
+            <Canvas x:Name="CalibCanvas">
+                <Ellipse x:Name="CalibGlow" Width="90" Height="90" IsHitTestVisible="False">
+                    <Ellipse.Fill>
+                        <RadialGradientBrush>
+                            <GradientStop Color="#90FF9F1C" Offset="0" />
+                            <GradientStop Color="#00FF9F1C" Offset="1" />
+                        </RadialGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <Ellipse x:Name="CalibDot" Width="34" Height="34" Fill="#FF9F1C" Stroke="White" StrokeThickness="3" />
+                <Ellipse x:Name="CalibCenter" Width="8" Height="8" Fill="#05070F" />
+            </Canvas>
+            <StackPanel VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,40,0,0" IsHitTestVisible="False">
+                <TextBlock x:Name="CalibTitle" FontFamily="Consolas" FontSize="30" FontWeight="Bold"
+                           Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" TextAlignment="Center" />
+                <TextBlock x:Name="CalibInfo" FontFamily="Consolas" FontSize="17" Foreground="#C8D3EA"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="760" Margin="0,8,0,0" />
+            </StackPanel>
+            <Grid VerticalAlignment="Bottom" Height="6" Background="#141B2B">
+                <Rectangle x:Name="CalibProgress" HorizontalAlignment="Left" Width="0" Fill="#5CE1FF" />
+            </Grid>
+        </Grid>
+
+        <!-- ───────── Пауза: взгляд ушёл с экрана ───────── -->
+        <Grid x:Name="GazePausePanel" Grid.RowSpan="2" Background="#E6050712" Visibility="Collapsed">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Path x:Name="GazeArrow" Data="M 0,34 L 30,0 L 60,34 M 30,0 L 30,70" Stroke="{StaticResource OrangeBrush}"
+                      StrokeThickness="7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                      HorizontalAlignment="Center" Margin="0,0,0,18">
+                    <Path.RenderTransform>
+                        <TranslateTransform x:Name="ArrowShift" />
+                    </Path.RenderTransform>
+                </Path>
+                <Canvas Width="240" Height="140" HorizontalAlignment="Center">
+                    <Canvas.Clip>
+                        <PathGeometry Figures="M 10,70 Q 120,-10 230,70 Q 120,150 10,70 Z" />
+                    </Canvas.Clip>
+                    <Path Data="M 10,70 Q 120,-10 230,70 Q 120,150 10,70 Z" Fill="#EAF2FF" />
+                    <Canvas>
+                        <Canvas.RenderTransform>
+                            <TranslateTransform x:Name="IrisShift" />
+                        </Canvas.RenderTransform>
+                        <Ellipse Canvas.Left="88" Canvas.Top="38" Width="64" Height="64" Fill="#2B7FD6" />
+                        <Ellipse Canvas.Left="106" Canvas.Top="56" Width="28" Height="28" Fill="#05070F" />
+                        <Ellipse Canvas.Left="122" Canvas.Top="58" Width="9" Height="9" Fill="White" />
+                    </Canvas>
+                    <Path Data="M 10,70 Q 120,-10 230,70 Q 120,150 10,70 Z" Stroke="{StaticResource AccentBrush}"
+                          StrokeThickness="5" />
+                </Canvas>
+                <TextBlock x:Name="GazeWarnText" Text="ПОДНИМИТЕ ГЛАЗА НА ЭКРАН" FontFamily="Consolas" FontSize="42"
+                           FontWeight="Bold" Foreground="{StaticResource OrangeBrush}" HorizontalAlignment="Center"
+                           Margin="0,26,0,0" RenderTransformOrigin="0.5,0.5">
+                    <TextBlock.RenderTransform>
+                        <ScaleTransform x:Name="GazeWarnScale" />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+                <TextBlock FontFamily="Consolas" FontSize="17" Foreground="#C8D3EA" HorizontalAlignment="Center"
+                           TextAlignment="Center" TextWrapping="Wrap" MaxWidth="640" Margin="0,12,0,0"
+                           Text="Не смотрите на клавиатуру — пальцы найдут клавиши сами. Игра продолжится, как только взгляд вернётся на экран." />
+                <TextBlock x:Name="GazeResumeText" FontFamily="Consolas" FontSize="20" FontWeight="Bold"
+                           Foreground="#6BFFB0" HorizontalAlignment="Center" Margin="0,16,0,0" />
+                <TextBlock Text="Esc — обычная пауза" FontFamily="Consolas" FontSize="13"
+                           Foreground="{StaticResource DimBrush}" HorizontalAlignment="Center" Margin="0,10,0,0" />
+            </StackPanel>
+        </Grid>
 
         <!-- ───────── Пауза ───────── -->
         <Border x:Name="PausePanel" Grid.RowSpan="2" Style="{StaticResource PanelStyle}" Width="380" Visibility="Collapsed">

@@ -3,12 +3,28 @@ using System.Text.Json;
 
 namespace TypeStrike.Game;
 
-/// <summary>Сохранённая калибровка камеры: положение лица, когда игрок смотрит на экран.</summary>
+/// <summary>
+/// Сохранённая калибровка камеры: положение лица при взгляде на экран
+/// и линейная модель «признаки глаз и лица → точка на экране».
+/// </summary>
 public sealed class GazeCalibration
 {
     public double FaceY { get; set; }
     public double FaceHeight { get; set; }
     public double EyeRate { get; set; }
+
+    /// <summary>Средние и разброс признаков — для нормировки.</summary>
+    public double[]? Means { get; set; }
+    public double[]? Stds { get; set; }
+    /// <summary>Веса модели для X и Y экрана (первый — свободный член).</summary>
+    public double[]? WeightsX { get; set; }
+    public double[]? WeightsY { get; set; }
+    /// <summary>Средняя ошибка на калибровочных точках в долях экрана.</summary>
+    public double Error { get; set; }
+
+    public bool HasModel(int featureCount) =>
+        Means?.Length == featureCount && Stds?.Length == featureCount &&
+        WeightsX?.Length == featureCount + 1 && WeightsY?.Length == featureCount + 1;
 }
 
 /// <summary>Настройки игры в %AppData%\TypeStrike\settings.json.</summary>
@@ -33,7 +49,7 @@ public sealed class AppSettings
     public double CameraSensitivity { get; set; } = 0.22;
     /// <summary>Учитывать пропажу открытых глаз (веки прикрываются при взгляде вниз).</summary>
     public bool CameraUseEyes { get; set; } = true;
-    public bool CalibrateEachGame { get; set; } = true;
+    public bool CalibrateEachGame { get; set; }
     public GazeCalibration? Calibration { get; set; }
 
     public static AppSettings Load()

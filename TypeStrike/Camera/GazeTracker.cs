@@ -7,29 +7,42 @@ using TypeStrike.Game;
 
 namespace TypeStrike.Camera;
 
-public enum GazeState { Starting, Calibrating, OnScreen, LookingDown, NoFace, Error }
+public enum GazeState { Starting, NeedsCalibration, OnScreen, LookingAway, NoFace, Error }
+
+/// <summary>Результат обработки кадра (для калибровки и экрана настроек).</summary>
+public sealed record GazeFrame(
+    bool Face,
+    bool Eyes,
+    double FaceY,
+    double FaceHeight,
+    double[]? Features,
+    double HeadDrop,
+    double GazeX,
+    double GazeY,
+    bool HasGaze);
 
 /// <summary>
-/// Следит по веб-камере, не смотрит ли игрок на клавиатуру.
-/// Это не точный eye-tracking, а эвристика: после калибровки (игрок смотрит на экран)
-/// взгляд вниз распознаётся по опусканию головы, по пропаже открытых глаз
-/// (веки прикрываются, когда смотрят вниз) или по пропаже лица из кадра.
+/// Отслеживание взгляда веб-камерой (OpenCV, каскады Хаара).
+/// В каждом кадре ищутся лицо, глаза и зрачки (самая тёмная область внутри глаза).
+/// Признаки — положение зрачков относительно лица и положение лица в кадре — после
+/// калибровки по движущейся точке переводятся моделью <see cref="GazeModel"/> в точку на экране.
+/// Взгляд «не на экране»: точка ушла за границы окна (обычно вниз, на клавиатуру),
+/// голова заметно опущена, открытые глаза пропали или лицо исчезло из кадра.
 /// Кадры обрабатываются только в памяти и никуда не сохраняются.
 /// </summary>
 public sealed class GazeTracker : IDisposable
 {
     const int FrameWidth = 320;
-    const double CalibrationSeconds = 2.5;
-    const int MinCalibrationSamples = 10;
     const int VoteWindow = 8;
+    /// <summary>Сглаживание признаков между кадрами (доля нового кадра).</summary>
+    const double Smoothing = 0.5;
 
     readonly Dispatcher _dispatcher;
     readonly CancellationTokenSource _cts = new();
     Task? _worker;
-    volatile bool _recalibrate;
+    GazeCalibration? _calibration;
     double _headDropThreshold = 0.22;
     volatile bool _useEyes = true;
-    DateTime _lastMetrics;
 
     public GazeTracker(Dispatcher dispatcher, int cameraIndex)
     {
@@ -38,6 +51,8 @@ public sealed class GazeTracker : IDisposable
     }
 
     public int CameraIndex { get; }
+    public GazeState State { get; private set; } = GazeState.Starting;
+    public string? ErrorMessage { get; private set; }
 
     /// <summary>На сколько высот лица должен сместиться центр лица вниз, чтобы считать голову опущенной.</summary>
     public double HeadDropThreshold
@@ -53,56 +68,24 @@ public sealed class GazeTracker : IDisposable
         set => _useEyes = value;
     }
 
-    /// <summary>Калибровка завершена (в UI-потоке) — её можно сохранить и использовать в следующий раз.</summary>
-    public event Action<GazeCalibration>? Calibrated;
-    /// <summary>Текущие показатели для экрана настроек: наклон головы, лицо найдено, глаза найдены.</summary>
-    public event Action<double, bool, bool>? Metrics;
-
-    public GazeState State { get; private set; } = GazeState.Starting;
-    public string? ErrorMessage { get; private set; }
-
     /// <summary>Вызывается в UI-потоке при смене состояния.</summary>
     public event Action<GazeState>? StateChanged;
-    /// <summary>Кадр предпросмотра (зеркальный, с рамками лица и глаз), в UI-потоке.</summary>
+    /// <summary>Кадр предпросмотра (зеркальный, с рамками лица, глаз и зрачками), в UI-потоке.</summary>
     public event Action<BitmapSource>? Preview;
+    /// <summary>Признаки и оценка взгляда по каждому кадру, в UI-потоке.</summary>
+    public event Action<GazeFrame>? Frame;
 
-    /// <summary>Запуск. Если передана сохранённая калибровка — сразу начинаем следить, без калибровки.</summary>
-    public void Start(GazeCalibration? calibration = null) => _worker ??= Task.Run(() => Run(calibration, _cts.Token));
-
-    /// <summary>Заново запомнить положение «смотрю на экран».</summary>
-    public void Recalibrate() => _recalibrate = true;
-
-    sealed class Baseline
+    public void Start(GazeCalibration? calibration)
     {
-        public int Samples;
-        public int EyeHits;
-        double _faceY, _faceH;
-
-        public double FaceY => _faceY / Math.Max(1, Samples);
-        public double FaceH => _faceH / Math.Max(1, Samples);
-        public double EyeRate => Samples == 0 ? 0 : (double)EyeHits / Samples;
-
-        public static Baseline From(GazeCalibration c) => new()
-        {
-            Samples = MinCalibrationSamples,
-            EyeHits = (int)Math.Round(c.EyeRate * MinCalibrationSamples),
-            _faceY = c.FaceY * MinCalibrationSamples,
-            _faceH = c.FaceHeight * MinCalibrationSamples,
-        };
-
-        public GazeCalibration ToCalibration() => new() { FaceY = FaceY, FaceHeight = FaceH, EyeRate = EyeRate };
-
-        public void Add(double faceY, double faceH, bool eyes)
-        {
-            Samples++;
-            _faceY += faceY;
-            _faceH += faceH;
-            if (eyes)
-                EyeHits++;
-        }
+        SetCalibration(calibration);
+        _worker ??= Task.Run(() => Run(_cts.Token));
     }
 
-    void Run(GazeCalibration? initial, CancellationToken ct)
+    /// <summary>Применить новую калибровку (null — следить нечем, нужна калибровка).</summary>
+    public void SetCalibration(GazeCalibration? calibration) =>
+        Volatile.Write(ref _calibration, calibration != null && calibration.HasModel(GazeModel.FeatureCount) ? calibration : null);
+
+    void Run(CancellationToken ct)
     {
         try
         {
@@ -120,27 +103,14 @@ public sealed class GazeTracker : IDisposable
             using var small = new Mat();
             using var gray = new Mat();
 
-            var baseline = initial != null ? Baseline.From(initial) : new Baseline();
             var votes = new Queue<bool>();
-            bool calibrated = initial != null;
-            var calibrationStart = DateTime.UtcNow;
             var lastFaceSeen = DateTime.UtcNow;
             var lastPreview = DateTime.MinValue;
-            SetState(calibrated ? GazeState.OnScreen : GazeState.Calibrating);
+            double[]? smoothed = null;
 
             while (!ct.IsCancellationRequested)
             {
                 var now = DateTime.UtcNow;
-                if (_recalibrate)
-                {
-                    _recalibrate = false;
-                    baseline = new Baseline();
-                    votes.Clear();
-                    calibrated = false;
-                    calibrationStart = now;
-                    SetState(GazeState.Calibrating);
-                }
-
                 if (!capture.Read(frame) || frame.Empty())
                 {
                     Thread.Sleep(30);
@@ -156,74 +126,79 @@ public sealed class GazeTracker : IDisposable
                 var faces = faceCascade.DetectMultiScale(gray, 1.15, 5, HaarDetectionTypes.ScaleImage, new Size(60, 60));
                 Rect? face = faces.Length > 0 ? faces.MaxBy(f => f.Width * f.Height) : null;
                 bool eyesFound = false;
+                double[]? features = null;
 
                 if (face is Rect f)
                 {
                     lastFaceSeen = now;
-                    // Глаза ищем только в верхней половине лица
-                    var upper = new Rect(f.X, f.Y, f.Width, f.Height * 55 / 100);
-                    using var roi = new Mat(gray, upper);
-                    var eyes = eyeCascade.DetectMultiScale(roi, 1.1, 4, HaarDetectionTypes.ScaleImage,
-                        new Size(f.Width / 8, f.Width / 8));
-                    eyesFound = eyes.Length > 0;
-
+                    features = Analyze(gray, small, f, eyeCascade, out eyesFound);
                     Cv2.Rectangle(small, f, Scalar.FromRgb(0x5C, 0xE1, 0xFF), 2);
-                    foreach (var e in eyes)
-                        Cv2.Rectangle(small, new Rect(f.X + e.X, f.Y + e.Y, e.Width, e.Height), Scalar.FromRgb(0x6B, 0xFF, 0xB0), 1);
                 }
 
+                if (features != null)
+                {
+                    if (smoothed == null)
+                        smoothed = features;
+                    else
+                        for (int i = 0; i < features.Length; i++)
+                            smoothed[i] += (features[i] - smoothed[i]) * Smoothing;
+                }
+                else if (face == null)
+                {
+                    smoothed = null;
+                }
+
+                var calibration = Volatile.Read(ref _calibration);
                 double faceY = face is Rect r1 ? (r1.Y + r1.Height / 2.0) / gray.Rows : 0;
                 double faceH = face is Rect r2 ? r2.Height / (double)gray.Rows : 0;
+                double drop = face != null && calibration != null
+                    ? (faceY - calibration.FaceY) / Math.Max(0.01, calibration.FaceHeight)
+                    : 0;
+                double gazeX = 0, gazeY = 0;
+                bool hasGaze = calibration != null && features != null && smoothed != null;
+                if (hasGaze)
+                    (gazeX, gazeY) = GazeModel.Predict(calibration!, smoothed!);
 
-                if (!calibrated)
+                var report = new GazeFrame(face != null, eyesFound, faceY, faceH,
+                    features != null && smoothed != null ? (double[])smoothed.Clone() : null,
+                    drop, gazeX, gazeY, hasGaze);
+                _dispatcher.BeginInvoke(() => Frame?.Invoke(report));
+
+                if (calibration == null)
                 {
-                    if (face != null)
-                        baseline.Add(faceY, faceH, eyesFound);
-                    if ((now - calibrationStart).TotalSeconds >= CalibrationSeconds && baseline.Samples >= MinCalibrationSamples)
-                    {
-                        calibrated = true;
-                        var result = baseline.ToCalibration();
-                        _dispatcher.BeginInvoke(() => Calibrated?.Invoke(result));
-                        SetState(GazeState.OnScreen);
-                    }
+                    votes.Clear();
+                    SetState(GazeState.NeedsCalibration);
                 }
                 else if (face == null && (now - lastFaceSeen).TotalSeconds > 5)
                 {
-                    // Лица давно нет — скорее всего, игрок отошёл; не считаем это подглядыванием
+                    // Лица давно нет — скорее всего, игрок отошёл
                     votes.Clear();
                     SetState(GazeState.NoFace);
                 }
                 else
                 {
-                    bool down;
-                    double drop = face != null ? (faceY - baseline.FaceY) / Math.Max(0.01, baseline.FaceH) : 0;
-                    if ((now - _lastMetrics).TotalMilliseconds >= 100)
-                    {
-                        _lastMetrics = now;
-                        bool hasFace = face != null, hasEyes = eyesFound;
-                        _dispatcher.BeginInvoke(() => Metrics?.Invoke(drop, hasFace, hasEyes));
-                    }
-
+                    bool away;
                     if (face == null)
                     {
                         // Сильно опущенную голову детектор лица уже не находит
-                        down = (now - lastFaceSeen).TotalSeconds > 0.4;
+                        away = (now - lastFaceSeen).TotalSeconds > 0.4;
                     }
                     else
                     {
                         bool headDown = drop > HeadDropThreshold;
-                        bool eyesHidden = UseEyes && baseline.EyeRate > 0.6 && !eyesFound;
-                        down = headDown || eyesHidden;
+                        bool eyesHidden = UseEyes && calibration.EyeRate > 0.6 && !eyesFound;
+                        bool offScreen = hasGaze && IsOffScreen(gazeX, gazeY);
+                        away = headDown || eyesHidden || offScreen;
                     }
 
-                    votes.Enqueue(down);
+                    votes.Enqueue(away);
                     if (votes.Count > VoteWindow)
                         votes.Dequeue();
-                    int downVotes = votes.Count(v => v);
+                    int awayVotes = votes.Count(v => v);
 
-                    if (downVotes >= 6)
-                        SetState(GazeState.LookingDown);
-                    else if (downVotes <= 2)
+                    if (awayVotes >= 6)
+                        SetState(GazeState.LookingAway);
+                    else if (awayVotes <= 2)
                         SetState(GazeState.OnScreen);
                 }
 
@@ -241,6 +216,73 @@ public sealed class GazeTracker : IDisposable
             ErrorMessage = ex.Message;
             SetState(GazeState.Error);
         }
+    }
+
+    /// <summary>Точка взгляда за пределами окна (с запасом на неточность модели).</summary>
+    public static bool IsOffScreen(double x, double y) => y > 1.12 || y < -0.35 || x < -0.3 || x > 1.3;
+
+    /// <summary>
+    /// Ищет глаза и зрачки. Возвращает признаки
+    /// [зрачок X и Y относительно лица, центр лица X и Y в кадре, ширина лица] или null.
+    /// </summary>
+    static double[]? Analyze(Mat gray, Mat preview, Rect face, CascadeClassifier eyeCascade, out bool eyesFound)
+    {
+        // Глаза ищем только в верхней половине лица
+        var upper = new Rect(face.X, face.Y, face.Width, face.Height * 55 / 100);
+        Rect[] eyes;
+        using (var roi = new Mat(gray, upper))
+            eyes = eyeCascade.DetectMultiScale(roi, 1.1, 4, HaarDetectionTypes.ScaleImage, new Size(face.Width / 8, face.Width / 8));
+        eyesFound = eyes.Length > 0;
+
+        double sumX = 0, sumY = 0;
+        int pupils = 0;
+        foreach (var e in eyes.OrderByDescending(e => e.Width * e.Height).Take(2))
+        {
+            var eye = new Rect(face.X + e.X, face.Y + e.Y, e.Width, e.Height);
+            Cv2.Rectangle(preview, eye, Scalar.FromRgb(0x6B, 0xFF, 0xB0), 1);
+            if (FindPupil(gray, eye) is Point2d pupil)
+            {
+                Cv2.Circle(preview, new Point((int)pupil.X, (int)pupil.Y), 2, Scalar.FromRgb(0xFF, 0x9F, 0x1C), -1);
+                sumX += pupil.X;
+                sumY += pupil.Y;
+                pupils++;
+            }
+        }
+        if (pupils == 0)
+            return null;
+
+        return new[]
+        {
+            (sumX / pupils - face.X) / face.Width,
+            (sumY / pupils - face.Y) / face.Height,
+            (face.X + face.Width / 2.0) / gray.Cols,
+            (face.Y + face.Height / 2.0) / gray.Rows,
+            face.Width / (double)gray.Cols,
+        };
+    }
+
+    /// <summary>Зрачок — центр самых тёмных пикселей в средней части глаза (без брови и уголков).</summary>
+    static Point2d? FindPupil(Mat gray, Rect eye)
+    {
+        var inner = new Rect(eye.X + eye.Width * 15 / 100, eye.Y + eye.Height * 30 / 100,
+            eye.Width * 70 / 100, eye.Height * 50 / 100);
+        inner &= new Rect(0, 0, gray.Cols, gray.Rows);
+        if (inner.Width < 4 || inner.Height < 3)
+            return null;
+
+        using var roi = new Mat(gray, inner);
+        using var blurred = new Mat();
+        using var mask = new Mat();
+        Cv2.GaussianBlur(roi, blurred, new Size(5, 5), 0);
+        Cv2.MinMaxLoc(blurred, out double min, out double max);
+        if (max - min < 10)
+            return null;
+        Cv2.Threshold(blurred, mask, min + (max - min) * 0.25, 255, ThresholdTypes.BinaryInv);
+
+        var m = Cv2.Moments(mask, true);
+        if (m.M00 < 3)
+            return null;
+        return new Point2d(inner.X + m.M10 / m.M00, inner.Y + m.M01 / m.M00);
     }
 
     void SetState(GazeState state)
