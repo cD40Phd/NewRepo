@@ -12,6 +12,8 @@ public sealed class GazeCalibration
     public double FaceY { get; set; }
     public double FaceHeight { get; set; }
     public double EyeRate { get; set; }
+    /// <summary>Каким набором признаков построена модель (см. GazeModel.FeatureVersion).</summary>
+    public int FeatureVersion { get; set; }
 
     /// <summary>Средние и разброс признаков — для нормировки.</summary>
     public double[]? Means { get; set; }
@@ -28,6 +30,7 @@ public sealed class GazeCalibration
     public int GameSamples => Samples?.Count(s => s.FromGame) ?? 0;
 
     public bool HasModel(int featureCount) =>
+        FeatureVersion == Camera.GazeModel.FeatureVersion &&
         Means?.Length == featureCount && Stds?.Length == featureCount &&
         WeightsX?.Length == featureCount + 1 && WeightsY?.Length == featureCount + 1;
 }
@@ -64,8 +67,8 @@ public sealed class AppSettings
     public int CameraIndex { get; set; }
     /// <summary>Порог наклона головы (в высотах лица), выше которого считаем, что игрок смотрит вниз.</summary>
     public double CameraSensitivity { get; set; } = 0.22;
-    /// <summary>Учитывать пропажу открытых глаз (веки прикрываются при взгляде вниз).</summary>
-    public bool CameraUseEyes { get; set; } = true;
+    /// <summary>Показывать в игре кружок там, куда направлена голова.</summary>
+    public bool ShowHeadCursor { get; set; } = true;
     public bool CalibrateEachGame { get; set; }
     /// <summary>Медленно прятать подсказку клавиатуры, пока взгляд следит за атакуемым врагом.</summary>
     public bool AutoHideHint { get; set; } = true;

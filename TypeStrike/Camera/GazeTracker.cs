@@ -13,7 +13,7 @@ public enum GazeState { Starting, NeedsCalibration, OnScreen, LookingAway, NoFac
 /// <summary>Результат обработки кадра (для калибровки, игры и экрана настроек).</summary>
 public sealed record GazeFrame(
     bool Face,
-    bool Eyes,
+    bool Tracking,
     double FaceY,
     double FaceHeight,
     double[]? Features,
@@ -26,33 +26,39 @@ public sealed record GazeFrame(
     double LatencyMs);
 
 /// <summary>
-/// Отслеживание взгляда веб-камерой (OpenCV).
-/// В каждом кадре ищутся лицо и радужки — тёмный круг в разрезе век на белом фоне белка.
-/// Признаки — положение радужки в разрезе глаза, сколько белка видно с каждой стороны,
-/// насколько веко срезает радужку, положение лица в кадре — после калибровки по движущейся
-/// точке переводятся моделью <see cref="GazeModel"/> в точку на экране.
+/// Слежение за направлением головы веб-камерой (OpenCV).
+/// У обычной камеры на расстоянии вытянутой руки глаза занимают несколько пикселей,
+/// поэтому зрачки и направление взгляда не отследить — следим за поворотом и наклоном головы.
 ///
-/// Чтобы взгляд отслеживался без задержки:
-/// • кадры читает отдельный поток, обработка всегда берёт самый свежий (буфер драйвера не копится);
-/// • лицо ищется рядом с прошлым положением, а не по всему кадру;
-/// • глаза берутся по пропорциям лица — медленный каскад глаз не нужен;
-/// • признаки сглаживает фильтр One Euro (дрожание гасится, быстрые движения проходят сразу);
-/// • решение «взгляд ушёл / вернулся» принимается по времени (~0,2 с), а не по числу кадров.
+/// • Лицо находит каскад Хаара (рядом с прошлым положением — в разы быстрее).
+/// • В центре лица (глаза, нос, рот) выбираются 20–40 опорных точек, и они отслеживаются
+///   оптическим потоком Лукаса–Канаде: это субпиксельно точно и плавно, в отличие от рамки лица.
+///   Когда голову опускают к клавиатуре, каскад часто теряет лицо, а точки ещё видны.
+/// • Признаки: центр точек в кадре, центр и ширина рамки лица и смещение точек
+///   относительно рамки (при повороте головы черты лица уходят к краю рамки).
+/// • После калибровки (игрок «указывает носом» на движущуюся точку) модель <see cref="GazeModel"/>
+///   переводит признаки в точку на экране, куда направлена голова.
+/// • Голова «не на экран»: точка ушла за границы окна (обычно вниз — на клавиатуру),
+///   голова заметно опущена или лицо и точки потеряны.
 /// Кадры обрабатываются только в памяти и никуда не сохраняются.
 /// </summary>
 public sealed class GazeTracker : IDisposable
 {
     const int FrameWidth = 320;
-    /// <summary>За сколько секунд непрерывных признаков «не на экране» состояние переключается.</summary>
+    /// <summary>За сколько секунд непрерывных признаков «не на экран» состояние переключается.</summary>
     const double AwayRiseSeconds = 0.2;
-    /// <summary>За сколько секунд взгляда на экран состояние возвращается.</summary>
+    /// <summary>За сколько секунд «на экран» состояние возвращается.</summary>
     const double AwayFallSeconds = 0.25;
-    /// <summary>Лицо пропало дольше этого — считаем, что голова опущена к клавиатуре.</summary>
-    const double FaceLostAwaySeconds = 0.25;
+    /// <summary>Лицо и точки потеряны дольше этого — считаем, что голова опущена к клавиатуре.</summary>
+    const double LostAwaySeconds = 0.25;
     /// <summary>Лицо пропало дольше этого — игрок отошёл.</summary>
     const double NoFaceSeconds = 5;
     /// <summary>Сколько секунд после потери лица ещё искать его рядом с прошлым местом.</summary>
     const double FaceTrackSeconds = 0.5;
+    /// <summary>Без рамки лица точки ведём не дольше этого — дальше им нельзя доверять.</summary>
+    const double PointsWithoutFaceSeconds = 1.5;
+    const int MaxPoints = 40;
+    const int MinPoints = 8;
 
     readonly Dispatcher _dispatcher;
     readonly CancellationTokenSource _cts = new();
@@ -64,7 +70,6 @@ public sealed class GazeTracker : IDisposable
     bool _hasNewFrame;
     GazeCalibration? _calibration;
     double _headDropThreshold = 0.22;
-    volatile bool _useEyes = true;
     volatile bool _previewEnabled = true;
 
     public GazeTracker(Dispatcher dispatcher, int cameraIndex)
@@ -84,13 +89,6 @@ public sealed class GazeTracker : IDisposable
         set => Volatile.Write(ref _headDropThreshold, value);
     }
 
-    /// <summary>Учитывать пропажу радужки (веки прикрываются, когда смотрят вниз).</summary>
-    public bool UseEyes
-    {
-        get => _useEyes;
-        set => _useEyes = value;
-    }
-
     /// <summary>Готовить ли картинку предпросмотра (это лишняя работа, когда её никто не видит).</summary>
     public bool PreviewEnabled
     {
@@ -100,9 +98,9 @@ public sealed class GazeTracker : IDisposable
 
     /// <summary>Вызывается в UI-потоке при смене состояния.</summary>
     public event Action<GazeState>? StateChanged;
-    /// <summary>Кадр предпросмотра (зеркальный, с рамками лица, глаз и радужек), в UI-потоке.</summary>
+    /// <summary>Кадр предпросмотра (зеркальный, с рамкой лица и опорными точками), в UI-потоке.</summary>
     public event Action<BitmapSource>? Preview;
-    /// <summary>Признаки и оценка взгляда по каждому кадру, в UI-потоке.</summary>
+    /// <summary>Признаки и оценка направления головы по каждому кадру, в UI-потоке.</summary>
     public event Action<GazeFrame>? Frame;
 
     public void Start(GazeCalibration? calibration)
@@ -207,9 +205,11 @@ public sealed class GazeTracker : IDisposable
             var frame = new Mat();
             using var small = new Mat();
             using var gray = new Mat();
+            using var previousGray = new Mat();
+            var head = new HeadPoints();
             var filter = new OneEuroFilter();
             var clock = Stopwatch.StartNew();
-            double lastFaceSeen = 0, lastFrameTime = 0, lastPreview = -1, awayScore = 0;
+            double lastFaceSeen = 0, lastTracked = 0, lastFrameTime = 0, lastPreview = -1, awayScore = 0;
             double fps = 0, processingMs = 0, latencyMs = 0;
             Rect? lastFace = null;
 
@@ -227,31 +227,43 @@ public sealed class GazeTracker : IDisposable
                 Cv2.Resize(frame, small, new Size(FrameWidth, height), 0, 0, InterpolationFlags.Area);
                 Cv2.Flip(small, small, FlipMode.Y);
                 Cv2.CvtColor(small, gray, ColorConversionCodes.BGR2GRAY);
-                Cv2.EqualizeHist(gray, gray);
+                // Для оптического потока нужна исходная яркость; выравнивание — только для каскада
+                using var equalized = new Mat();
+                Cv2.EqualizeHist(gray, equalized);
 
-                var face = FindFace(faceCascade, gray, now - lastFaceSeen < FaceTrackSeconds ? lastFace : null);
-                bool eyesFound = false;
-                double[]? features = null;
-                bool drawPreview = PreviewEnabled && now - lastPreview >= 0.1;
-
-                if (face is Rect f)
+                var face = FindFace(faceCascade, equalized, now - lastFaceSeen < FaceTrackSeconds ? lastFace : null);
+                if (face is Rect found)
                 {
                     lastFaceSeen = now;
-                    lastFace = f;
-                    features = Analyze(gray, drawPreview ? small : null, f, out eyesFound);
-                    if (drawPreview)
-                        Cv2.Rectangle(small, f, Scalar.FromRgb(0x5C, 0xE1, 0xFF), 2);
+                    lastFace = found;
                 }
 
+                bool faceRecent = lastFace != null && now - lastFaceSeen < PointsWithoutFaceSeconds;
+                bool tracking = faceRecent && head.Update(previousGray, gray, face ?? lastFace!.Value, face != null);
+                gray.CopyTo(previousGray);
+                if (tracking)
+                    lastTracked = now;
+                else
+                    head.Reset();
+
+                bool drawPreview = PreviewEnabled && now - lastPreview >= 0.1;
+                if (drawPreview)
+                {
+                    if (face is Rect f)
+                        Cv2.Rectangle(small, f, Scalar.FromRgb(0x5C, 0xE1, 0xFF), 2);
+                    head.Draw(small);
+                }
+
+                double[]? features = tracking ? head.Features(lastFace!.Value, gray.Cols, gray.Rows) : null;
                 double[]? smoothed = null;
                 if (features != null)
                     smoothed = filter.Filter(features, dt);
-                else if (face == null)
+                else
                     filter.Reset();
 
                 var calibration = Volatile.Read(ref _calibration);
-                double faceY = face is Rect r1 ? (r1.Y + r1.Height / 2.0) / gray.Rows : 0;
-                double faceH = face is Rect r2 ? r2.Height / (double)gray.Rows : 0;
+                double faceY = lastFace is Rect r1 ? (r1.Y + r1.Height / 2.0) / gray.Rows : 0;
+                double faceH = lastFace is Rect r2 ? r2.Height / (double)gray.Rows : 0;
                 double drop = face != null && calibration != null
                     ? (faceY - calibration.FaceY) / Math.Max(0.01, calibration.FaceHeight)
                     : 0;
@@ -260,24 +272,22 @@ public sealed class GazeTracker : IDisposable
                 if (hasGaze)
                     (gazeX, gazeY) = GazeModel.Predict(calibration!, smoothed!);
 
-                // Решение по времени: «очки» отведённого взгляда растут за AwayRiseSeconds и падают за AwayFallSeconds
+                // Решение по времени: «очки» отведённой головы растут за AwayRiseSeconds и падают за AwayFallSeconds
                 if (calibration == null)
                 {
                     awayScore = 0;
                     SetState(GazeState.NeedsCalibration);
                 }
-                else if (face == null && now - lastFaceSeen > NoFaceSeconds)
+                else if (!tracking && now - Math.Max(lastFaceSeen, lastTracked) > NoFaceSeconds)
                 {
                     awayScore = 0;
                     SetState(GazeState.NoFace);
                 }
                 else
                 {
-                    bool away = face == null
-                        ? now - lastFaceSeen > FaceLostAwaySeconds
-                        : drop > HeadDropThreshold
-                          || (UseEyes && calibration.EyeRate > 0.6 && !eyesFound)
-                          || (hasGaze && IsOffScreen(gazeX, gazeY));
+                    bool away = !tracking
+                        ? now - lastTracked > LostAwaySeconds
+                        : drop > HeadDropThreshold || (hasGaze && IsOffScreen(gazeX, gazeY));
                     awayScore = away
                         ? Math.Min(1, awayScore + dt / AwayRiseSeconds)
                         : Math.Max(0, awayScore - dt / AwayFallSeconds);
@@ -297,7 +307,7 @@ public sealed class GazeTracker : IDisposable
                 if (dt > 0)
                     fps += (1 / dt - fps) * 0.1;
 
-                var report = new GazeFrame(face != null, eyesFound, faceY, faceH, smoothed,
+                var report = new GazeFrame(face != null, tracking, faceY, faceH, smoothed,
                     drop, gazeX, gazeY, hasGaze, fps, processingMs, latencyMs);
                 _dispatcher.BeginInvoke(DispatcherPriority.Send, () => Frame?.Invoke(report));
 
@@ -358,149 +368,113 @@ public sealed class GazeTracker : IDisposable
         return faces.Length > 0 ? faces.MaxBy(r => r.Width * r.Height) : null;
     }
 
-    /// <summary>Точка взгляда за пределами окна (с запасом на неточность модели).</summary>
+    /// <summary>Точка за пределами окна (с запасом на неточность модели).</summary>
     public static bool IsOffScreen(double x, double y) => y > 1.12 || y < -0.35 || x < -0.3 || x > 1.3;
 
-    /// <summary>Признаки одного глаза (всё нормировано на размер разреза глаза).</summary>
-    readonly record struct EyeFeatures(double IrisX, double IrisY, double Openness, double ScleraBalance);
-
     /// <summary>
-    /// Анализ обоих глаз. Области глаз берутся по пропорциям лица (центры глаз у фронтального
-    /// лица — примерно на 30 % и 70 % ширины и 38 % высоты рамки) — это быстрее и стабильнее
-    /// каскада глаз. Возвращает [радужка X, радужка Y, открытость, баланс белка,
-    /// центр лица X, Y, ширина лица] или null, если радужка не видна ни в одном глазу.
+    /// Опорные точки на лице, отслеживаемые оптическим потоком.
+    /// При пересеве точек положение их центра сохраняется непрерывным (без скачка указателя).
     /// </summary>
-    static double[]? Analyze(Mat gray, Mat? preview, Rect face, out bool eyesFound)
+    sealed class HeadPoints
     {
-        int size = face.Width * 26 / 100;
-        int centerY = face.Y + face.Height * 38 / 100;
-        var found = new List<EyeFeatures>(2);
-        foreach (int centerX in new[] { face.X + face.Width * 30 / 100, face.X + face.Width * 70 / 100 })
+        Point2f[] _points = Array.Empty<Point2f>();
+        Point2d _shift;
+        Point2d _center;
+        bool _hasCenter;
+        int _framesSinceSeed;
+
+        public void Reset()
         {
-            var eye = new Rect(centerX - size / 2, centerY - size / 2, size, size);
-            if (preview != null)
-                Cv2.Rectangle(preview, eye, Scalar.FromRgb(0x6B, 0xFF, 0xB0), 1);
-            if (AnalyzeEye(gray, preview, eye) is EyeFeatures features)
-                found.Add(features);
+            _points = Array.Empty<Point2f>();
+            _hasCenter = false;
+            _shift = default;
         }
 
-        // «Глаза видны» — значит, видна радужка в разрезе век; если веки прикрыты, её нет
-        eyesFound = found.Count > 0;
-        if (found.Count == 0)
-            return null;
-
-        return new[]
+        /// <summary>Сдвигает точки на новый кадр; при необходимости выбирает новые. false — следить нечем.</summary>
+        public bool Update(Mat previous, Mat current, Rect face, bool faceDetected)
         {
-            found.Average(f => f.IrisX),
-            found.Average(f => f.IrisY),
-            found.Average(f => f.Openness),
-            found.Average(f => f.ScleraBalance),
-            (face.X + face.Width / 2.0) / gray.Cols,
-            (face.Y + face.Height / 2.0) / gray.Rows,
-            face.Width / (double)gray.Cols,
-        };
-    }
-
-    /// <summary>
-    /// Радужка целиком: тёмный круг в разрезе век на фоне белка.
-    /// По горизонтали — самая тёмная вертикальная полоса шириной с радужку,
-    /// по вертикали — строки, где эта полоса тёмная (верхнее веко срезает радужку,
-    /// когда смотрят вниз). Белок — самые светлые пиксели слева и справа от радужки.
-    /// </summary>
-    static EyeFeatures? AnalyzeEye(Mat gray, Mat? preview, Rect eye)
-    {
-        // Убираем бровь сверху, щёку снизу и уголки по бокам
-        var inner = new Rect(eye.X + eye.Width * 8 / 100, eye.Y + eye.Height * 25 / 100,
-            eye.Width * 84 / 100, eye.Height * 60 / 100);
-        inner &= new Rect(0, 0, gray.Cols, gray.Rows);
-        int w = inner.Width, h = inner.Height;
-        if (w < 10 || h < 6)
-            return null;
-
-        using var roi = new Mat(gray, inner);
-        using var blurred = new Mat();
-        using var otsuMask = new Mat();
-        Cv2.GaussianBlur(roi, blurred, new Size(3, 3), 0);
-        double otsu = Cv2.Threshold(blurred, otsuMask, 0, 255, ThresholdTypes.BinaryInv | ThresholdTypes.Otsu);
-        blurred.GetArray(out byte[] pixels);
-
-        // Тёмное — только радужка. Одного порога Оцу мало: когда веко опущено,
-        // он делит «кожа | белок» и засчитывает кожу века тёмной. Поэтому порог
-        // не выше середины между самыми тёмными пикселями и медианой.
-        var sorted = (byte[])pixels.Clone();
-        Array.Sort(sorted);
-        double low = sorted[sorted.Length * 5 / 100];
-        double median = sorted[sorted.Length / 2];
-        double darkThreshold = Math.Min(otsu, low + (median - low) * 0.6);
-        var mask = new byte[pixels.Length];
-        for (int i = 0; i < pixels.Length; i++)
-            mask[i] = pixels[i] <= darkThreshold ? (byte)1 : (byte)0;
-
-        // Самая тёмная вертикальная полоса шириной с радужку
-        int irisWidth = Math.Max(3, (int)(w * 0.35));
-        var columnDark = new int[w];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                if (mask[y * w + x] != 0)
-                    columnDark[x]++;
-
-        int window = 0, best = -1, bestX = 0;
-        for (int x = 0; x < w; x++)
-        {
-            window += columnDark[x];
-            if (x >= irisWidth)
-                window -= columnDark[x - irisWidth];
-            if (x >= irisWidth - 1 && window > best)
+            if (_points.Length > 0 && !previous.Empty())
             {
-                best = window;
-                bestX = x - irisWidth + 1;
+                var next = Array.Empty<Point2f>();
+                Cv2.CalcOpticalFlowPyrLK(previous, current, _points, ref next, out byte[] status, out float[] error,
+                    new Size(15, 15), 2);
+                var area = Inflate(face, face.Width / 3);
+                var kept = new List<Point2f>(_points.Length);
+                for (int i = 0; i < next.Length; i++)
+                    if (status[i] == 1 && error[i] < 25 && area.Contains((int)next[i].X, (int)next[i].Y))
+                        kept.Add(next[i]);
+                _points = kept.ToArray();
+            }
+
+            _framesSinceSeed++;
+            // Точек мало или они давно не обновлялись — выбираем новые, пока лицо видно
+            if (faceDetected && (_points.Length < MinPoints || _framesSinceSeed > 150))
+                Seed(current, face);
+
+            if (_points.Length < MinPoints / 2)
+                return false;
+
+            // Поправка на непрерывность медленно (≈10 с) уходит к нулю: накопленный дрейф
+            // оптического потока не копится, а центр точек снова привязывается к лицу
+            _shift = new Point2d(_shift.X * 0.997, _shift.Y * 0.997);
+
+            var raw = Mean(_points);
+            _center = new Point2d(raw.X + _shift.X, raw.Y + _shift.Y);
+            _hasCenter = true;
+            return true;
+        }
+
+        void Seed(Mat gray, Rect face)
+        {
+            // Центр лица: глаза, нос, рот — там самые надёжные для слежения уголки
+            var region = new Rect(face.X + face.Width / 4, face.Y + face.Height / 4, face.Width / 2, face.Height * 55 / 100)
+                         & new Rect(0, 0, gray.Cols, gray.Rows);
+            if (region.Width < 8 || region.Height < 8)
+                return;
+            using var mask = new Mat(gray.Size(), MatType.CV_8UC1, Scalar.All(0));
+            Cv2.Rectangle(mask, region, Scalar.All(255), -1);
+            var fresh = Cv2.GoodFeaturesToTrack(gray, MaxPoints, 0.01, Math.Max(3, face.Width / 20), mask, 3, false, 0.04);
+            if (fresh.Length < MinPoints)
+                return;
+
+            // Указатель не должен прыгать: новый центр «пришиваем» к прежнему
+            var freshMean = Mean(fresh);
+            _shift = _hasCenter ? new Point2d(_center.X - freshMean.X, _center.Y - freshMean.Y) : default;
+            _points = fresh;
+            _framesSinceSeed = 0;
+        }
+
+        /// <summary>[центр точек X, Y, центр лица X, Y, ширина лица, смещение точек от центра лица X, Y].</summary>
+        public double[] Features(Rect face, int width, int height)
+        {
+            double faceCx = face.X + face.Width / 2.0, faceCy = face.Y + face.Height / 2.0;
+            return new[]
+            {
+                _center.X / width,
+                _center.Y / height,
+                faceCx / width,
+                faceCy / height,
+                face.Width / (double)width,
+                (_center.X - faceCx) / face.Width,
+                (_center.Y - faceCy) / face.Height,
+            };
+        }
+
+        public void Draw(Mat preview)
+        {
+            foreach (var p in _points)
+                Cv2.Circle(preview, new Point((int)p.X, (int)p.Y), 1, Scalar.FromRgb(0xFF, 0x9F, 0x1C), -1);
+            if (_hasCenter && _points.Length > 0)
+            {
+                var c = Mean(_points);
+                Cv2.DrawMarker(preview, new Point((int)c.X, (int)c.Y), Scalar.FromRgb(0x6B, 0xFF, 0xB0), MarkerTypes.Cross, 12, 2);
             }
         }
-        // Радужки не видно (веки прикрыты или смотрят сильно вниз)
-        if (best < irisWidth * h * 0.15)
-            return null;
 
-        // Строки, в которых видна радужка
-        int top = -1, bottom = -1;
-        for (int y = 0; y < h; y++)
-        {
-            int count = 0;
-            for (int x = bestX; x < bestX + irisWidth; x++)
-                if (mask[y * w + x] != 0)
-                    count++;
-            if (count > irisWidth * 0.35)
-            {
-                if (top < 0)
-                    top = y;
-                bottom = y;
-            }
-        }
-        if (top < 0)
-            return null;
-        int visible = bottom - top + 1;
+        static Point2d Mean(Point2f[] points) =>
+            new(points.Average(p => p.X), points.Average(p => p.Y));
 
-        // Белок: светлые пиксели слева и справа от радужки в разрезе век
-        double brightThreshold = median + (255 - median) * 0.4;
-        int left = 0, right = 0;
-        for (int y = top; y <= bottom; y++)
-            for (int x = 0; x < w; x++)
-            {
-                if (pixels[y * w + x] <= brightThreshold)
-                    continue;
-                if (x < bestX)
-                    left++;
-                else if (x >= bestX + irisWidth)
-                    right++;
-            }
-
-        if (preview != null)
-            Cv2.Rectangle(preview, new Rect(inner.X + bestX, inner.Y + top, irisWidth, visible), Scalar.FromRgb(0xFF, 0x9F, 0x1C), 1);
-
-        return new EyeFeatures(
-            IrisX: (bestX + irisWidth / 2.0) / w,
-            IrisY: (top + bottom) / 2.0 / h,
-            Openness: Math.Min(1.5, visible / (double)irisWidth),
-            ScleraBalance: (left - right) / (double)(left + right + 1));
+        static Rect Inflate(Rect r, int by) => new(r.X - by, r.Y - by, r.Width + 2 * by, r.Height + 2 * by);
     }
 
     void SetState(GazeState state)

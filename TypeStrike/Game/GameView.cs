@@ -35,6 +35,8 @@ public sealed class GameView : FrameworkElement
     static readonly Brush LabelBgTarget = Freeze(new SolidColorBrush(Color.FromArgb(0xE6, 0x2A, 0x1A, 0x08)));
     static readonly Pen LabelPen = Freeze(new Pen(TypedBrush, 1.5));
     static readonly Pen ReticlePen = Freeze(new Pen(TypedBrush, 2) { DashStyle = new DashStyle(new double[] { 3, 3 }, 0) });
+    static readonly Pen HeadCursorPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0x90, 0x5C, 0xE1, 0xFF))), 2));
+    static readonly Brush HeadCursorDot = Freeze(new SolidColorBrush(Color.FromArgb(0xC0, 0x5C, 0xE1, 0xFF)));
     static readonly Pen GazePen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(0xC0, 0x6B, 0xFF, 0xB0))), 2.5));
     static readonly Pen BulletPen = Freeze(new Pen(Solid(0xFF, 0xD0, 0x80), 2.5) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
     static readonly Pen BulletGlowPen = Freeze(new Pen(Freeze(new SolidColorBrush(Color.FromArgb(90, 255, 160, 40))), 8) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round });
@@ -252,8 +254,15 @@ public sealed class GameView : FrameworkElement
             DrawText(dc, $"точность {g.Accuracy:0.#}%", 14, DimBrush, w - 20, h - 30, TextAlignment.Right);
         }
 
+        // Кружок «куда направлена голова» — видно, что камера следит и куда она «думает»
+        if (g.HeadPointer is Point head && g.Phase == Phase.Fighting)
+        {
+            dc.DrawEllipse(null, HeadCursorPen, head, 14, 14);
+            dc.DrawEllipse(HeadCursorDot, null, head, 3, 3);
+        }
+
         if (g.HintLowered && g.Phase == Phase.Fighting)
-            DrawText(dc, "⌨ подсказка спрятана — взгляд следит за целью", 14, GreenBrush, w / 2, h - 26, TextAlignment.Center);
+            DrawText(dc, "⌨ подсказка спрятана — голова направлена на цель", 14, GreenBrush, w / 2, h - 26, TextAlignment.Center);
 
         if (g.LookingDown)
             DrawText(dc, "👀 СМОТРИТЕ НА ЭКРАН", 20, TypedBrush, w / 2, h - 175, TextAlignment.Center);

@@ -152,8 +152,10 @@ public sealed class GameEngine
     public bool LookingDown { get; private set; }
     /// <summary>Камера видит, что взгляд следит за атакуемым врагом (<see cref="HintEnemy"/>).</summary>
     public bool GazeOnTarget { get; set; }
-    /// <summary>Подсказка клавиатуры спрятана, потому что взгляд уверенно следит за целью.</summary>
+    /// <summary>Подсказка клавиатуры спрятана, потому что голова уверенно направлена на цель.</summary>
     public bool HintLowered { get; set; }
+    /// <summary>Куда направлена голова (координаты поля), если это нужно показать.</summary>
+    public Point? HeadPointer { get; set; }
 
     /// <summary>Сколько верных нажатий нужно новой букве урока, прежде чем подсказку можно прятать.</summary>
     public const int NewLetterPractice = 15;

@@ -7,18 +7,19 @@ public sealed record GazeSample(double[] Features, double TargetX, double Target
     bool FromGame = false, double Weight = 1);
 
 /// <summary>
-/// Модель взгляда: гребневая линейная регрессия из признаков
-/// (положение радужки в разрезе век, баланс белка, открытость глаза, положение и размер лица)
-/// в нормированные координаты окна (0..1). Точность у веб-камеры скромная,
-/// но её хватает, чтобы отличить «смотрит на экран» от «смотрит на клавиатуру».
+/// Модель направления головы: гребневая линейная регрессия из признаков
+/// (центр опорных точек лица, положение и размер рамки лица, смещение точек от центра рамки)
+/// в нормированные координаты окна (0..1) — туда, куда «указывает носом» игрок.
 /// </summary>
 public static class GazeModel
 {
     /// <summary>
-    /// Радужка X и Y в разрезе глаза, открытость (видимая высота радужки к её ширине),
-    /// баланс белка слева/справа, центр лица X и Y, ширина лица.
+    /// Центр опорных точек X и Y, центр лица X и Y, ширина лица,
+    /// смещение точек от центра лица X и Y (поворот и наклон головы).
     /// </summary>
     public const int FeatureCount = 7;
+    /// <summary>Версия набора признаков: калибровки со старыми признаками (по глазам) не подходят.</summary>
+    public const int FeatureVersion = 2;
     const double Lambda = 0.05;
     /// <summary>Вес игровой точки: она менее надёжна, чем точка калибровки.</summary>
     public const double GameSampleWeight = 0.6;
@@ -31,7 +32,7 @@ public static class GazeModel
         int targets = samples.Select(s => (Math.Round(s.TargetX, 2), Math.Round(s.TargetY, 2))).Distinct().Count();
         if (samples.Count < 40 || targets < 6)
         {
-            error = "Слишком мало кадров с лицом и глазами. Проверьте освещение и чтобы лицо было в кадре.";
+            error = "Слишком мало кадров с лицом. Проверьте освещение и чтобы лицо было в кадре целиком.";
             return null;
         }
 
@@ -56,6 +57,7 @@ public static class GazeModel
             FaceY = baseline.Average(s => s.FaceY),
             FaceHeight = baseline.Average(s => s.FaceHeight),
             EyeRate = eyeRate,
+            FeatureVersion = FeatureVersion,
             Means = means,
             Stds = stds,
             WeightsX = weightsX,

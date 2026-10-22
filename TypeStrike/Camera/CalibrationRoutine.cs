@@ -2,16 +2,16 @@ namespace TypeStrike.Camera;
 
 /// <summary>
 /// Сценарий калибровки: точка плавно перелетает по 9 позициям экрана
-/// и задерживается на каждой. Пока точка стоит, кадры камеры записываются
-/// как «игрок смотрит сюда».
+/// и задерживается на каждой. Игрок поворачивает голову, указывая носом на точку;
+/// пока точка стоит, кадры камеры записываются как «голова направлена сюда».
 /// </summary>
 public sealed class CalibrationRoutine
 {
     public const double IntroSeconds = 3.0;
-    const double MoveSeconds = 0.6;
-    const double DwellSeconds = 1.0;
-    /// <summary>Глазам нужно время, чтобы догнать точку, — первые доли секунды остановки не записываем.</summary>
-    const double SettleSeconds = 0.4;
+    const double MoveSeconds = 0.9;
+    const double DwellSeconds = 1.2;
+    /// <summary>Голове нужно время, чтобы довернуться к точке, — первые доли секунды остановки не записываем.</summary>
+    const double SettleSeconds = 0.5;
 
     public static readonly (double X, double Y)[] Points =
     {

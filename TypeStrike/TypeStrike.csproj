@@ -12,7 +12,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
     <!-- Версия программы: показывается в меню и в заголовке окна -->
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Product>TypeStrike</Product>
     <Description>Космический тренажёр слепой печати</Description>
     <Copyright>© 2026 TypeStrike</Copyright>

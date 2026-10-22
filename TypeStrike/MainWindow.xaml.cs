@@ -353,9 +353,9 @@ public partial class MainWindow : Window
             AddStat("Сбито кораблей", result.Words.ToString(CultureInfo.InvariantCulture));
         }
         if (_adaptedThisGame > 0)
-            AddStat("Подстройка взгляда", $"+{_adaptedThisGame} точек", "#5CE1FF");
+            AddStat("Подстройка калибровки", $"+{_adaptedThisGame} точек", "#5CE1FF");
         if (_gaze != null)
-            AddStat("Взгляд на клавиатуру", result.Peeks == 0 ? "ни разу 👍" : $"{result.Peeks} раз",
+            AddStat("Голова к клавиатуре", result.Peeks == 0 ? "ни разу 👍" : $"{result.Peeks} раз",
                 result.Peeks == 0 ? "#6BFFB0" : "#FF9F1C");
 
         var checkpoint = result.Lesson == null ? _scores.GetCheckpoint(ScoreKey(_engine.Words, _engine.Difficulty)) : null;
@@ -508,7 +508,6 @@ public partial class MainWindow : Window
         var tracker = new GazeTracker(Dispatcher, _settings.CameraIndex)
         {
             HeadDropThreshold = HeadDropThreshold,
-            UseEyes = _settings.CameraUseEyes,
         };
         // События уже остановленного трекера могут прийти позже — игнорируем их
         tracker.StateChanged += state =>
@@ -553,9 +552,9 @@ public partial class MainWindow : Window
         string text = state switch
         {
             GazeState.Starting => "Включаю камеру…",
-            GazeState.NeedsCalibration => "Нужна калибровка взгляда",
-            GazeState.OnScreen => "✔ Взгляд на экране",
-            GazeState.LookingAway => "👀 Взгляд не на экране!",
+            GazeState.NeedsCalibration => "Нужна калибровка по голове",
+            GazeState.OnScreen => "✔ Голова к экрану",
+            GazeState.LookingAway => "👀 Голова не к экрану!",
             GazeState.NoFace => "Лицо не в кадре",
             _ => "Камера недоступна: " + _gaze?.ErrorMessage,
         };
@@ -593,7 +592,7 @@ public partial class MainWindow : Window
             if (frame.Face)
             {
                 _calibrationFaceFrames++;
-                if (frame.Eyes)
+                if (frame.Tracking)
                     _calibrationEyeFrames++;
             }
             if (frame.Features != null)
@@ -604,6 +603,9 @@ public partial class MainWindow : Window
         }
 
         UpdateGazeOnTarget(frame);
+        _engine.HeadPointer = _settings.ShowHeadCursor && _screen == Screen.Game && frame.HasGaze && Root.ActualWidth > 0
+            ? new Point(Math.Clamp(frame.GazeX, 0, 1) * Root.ActualWidth, Math.Clamp(frame.GazeY, 0, 1) * Root.ActualHeight)
+            : null;
 
         if (_screen != Screen.Settings)
             return;
@@ -613,9 +615,9 @@ public partial class MainWindow : Window
         DropMarker.Margin = new Thickness(Math.Clamp(HeadDropThreshold / 0.5, 0, 1) * width, 0, 0, 0);
         DropFill.Fill = (Brush)new BrushConverter().ConvertFromString(frame.HeadDrop > HeadDropThreshold ? "#FF9F1C" : "#5CE1FF")!;
 
-        string gaze = frame.HasGaze ? $"взгляд ({frame.GazeX:0.00}; {frame.GazeY:0.00})" : "взгляд: —";
+        string gaze = frame.HasGaze ? $"голова → ({frame.GazeX:0.00}; {frame.GazeY:0.00})" : "голова → —";
         MetricsText.Text = $"наклон {Math.Max(0, frame.HeadDrop):0.00} · порог {HeadDropThreshold:0.00}\n" +
-                           $"лицо: {(frame.Face ? "видно" : "не видно")} · глаза: {(frame.Eyes ? "видны" : "не видны")}\n{gaze}" +
+                           $"лицо: {(frame.Face ? "видно" : "не видно")} · точки: {(frame.Tracking ? "отслеживаются" : "нет")}\n{gaze}" +
                            $"\nкамера: {frame.Fps:0} к/с · обработка {frame.ProcessingMs:0} мс · задержка {frame.LatencyMs:0} мс" +
                            (_settings.Calibration is { } c && c.HasModel(GazeModel.FeatureCount)
                                ? $"\nкалибровка: ошибка ≈ {c.Error * 100:0}% · подстройка в игре: {c.GameSamples} точек"
@@ -828,9 +830,9 @@ public partial class MainWindow : Window
         Place(CalibCenter, tx * w, ty * h, 8);
         CalibProgress.Width = routine.Progress * ActualWidth;
 
-        CalibTitle.Text = routine.IsIntro ? $"КАЛИБРОВКА ВЗГЛЯДА · {routine.IntroCountdown}" : "СЛЕДИТЕ ЗА ТОЧКОЙ";
+        CalibTitle.Text = routine.IsIntro ? $"КАЛИБРОВКА ПО ГОЛОВЕ · {routine.IntroCountdown}" : "УКАЖИТЕ НОСОМ НА ТОЧКУ";
         CalibInfo.Text = routine.IsIntro
-            ? "Сядьте как при игре, пальцы на основном ряду. Следите глазами за оранжевой точкой, голову держите ровно. Esc — отмена."
+            ? "Сядьте как при игре, пальцы на основном ряду. Поворачивайте голову так, чтобы нос указывал на оранжевую точку. Esc — отмена."
             : _gaze?.State == GazeState.Error
                 ? "Камера недоступна: " + _gaze.ErrorMessage
                 : $"Кадров записано: {_calibrationSamples.Count}";
@@ -868,7 +870,7 @@ public partial class MainWindow : Window
         CalibDot.Visibility = CalibGlow.Visibility = CalibCenter.Visibility = Visibility.Hidden;
         CalibTitle.Text = "ГОТОВО!";
         CalibInfo.Text = $"Средняя ошибка ≈ {calibration.Error * 100:0}% экрана" +
-                         (calibration.Error > 0.2 ? " — неточно: попробуйте при лучшем свете и не двигая головой" : "");
+                         (calibration.Error > 0.2 ? " — неточно: попробуйте при лучшем свете и плавнее ведите головой за точкой" : "");
 
         var done = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.6) };
         done.Tick += (_, _) =>
@@ -924,7 +926,7 @@ public partial class MainWindow : Window
         CameraBox.IsChecked = _settings.CameraEnabled;
         (_settings.CameraIndex switch { 1 => Cam2, 2 => Cam3, _ => Cam1 }).IsChecked = true;
         SensitivitySlider.Value = (MaxHeadDrop - HeadDropThreshold) / (MaxHeadDrop - MinHeadDrop) * 100;
-        UseEyesBox.IsChecked = _settings.CameraUseEyes;
+        HeadCursorBox.IsChecked = _settings.ShowHeadCursor;
         CalibrateEachGameBox.IsChecked = _settings.CalibrateEachGame;
         AutoHideHintBox.IsChecked = _settings.AutoHideHint;
         AdaptiveGazeBox.IsChecked = _settings.AdaptiveGaze;
@@ -1022,13 +1024,11 @@ public partial class MainWindow : Window
 
     void CameraOption_Click(object sender, RoutedEventArgs e)
     {
-        _settings.CameraUseEyes = UseEyesBox.IsChecked == true;
+        _settings.ShowHeadCursor = HeadCursorBox.IsChecked == true;
         _settings.CalibrateEachGame = CalibrateEachGameBox.IsChecked == true;
         _settings.AutoHideHint = AutoHideHintBox.IsChecked == true;
         _settings.AdaptiveGaze = AdaptiveGazeBox.IsChecked == true;
         _settings.Save();
-        if (_gaze != null)
-            _gaze.UseEyes = _settings.CameraUseEyes;
     }
 
     void Calibrate_Click(object sender, RoutedEventArgs e)
