@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Мой YouTube</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="logo">▶ Мой YouTube</h1>
+    <input id="search" class="search" type="search" placeholder="Поиск по разрешённым каналам" data-nav autocomplete="off">
+    <button id="refresh-btn" class="icon-btn" data-nav title="Обновить">⟳</button>
+    <button id="settings-btn" class="icon-btn" data-nav title="Настройки">⚙</button>
+  </header>
+
+  <nav id="chips" class="chips"></nav>
+
+  <main>
+    <p id="status" class="status"></p>
+    <div id="grid" class="grid"></div>
+  </main>
+
+  <section id="player-overlay" class="overlay" hidden>
+    <div class="player-wrap"><div id="player"></div></div>
+    <div class="player-bar">
+      <span id="player-title" class="player-title"></span>
+      <button class="ctl" data-nav data-action="back10">⏪ 10 с</button>
+      <button class="ctl" data-nav data-action="toggle">⏯</button>
+      <button class="ctl" data-nav data-action="fwd10">10 с ⏩</button>
+      <button class="ctl" data-nav data-action="close">✕ Закрыть</button>
+    </div>
+    <p id="player-error" class="player-error" hidden></p>
+  </section>
+
+  <section id="settings-overlay" class="overlay settings" hidden>
+    <div class="panel">
+      <h2>Настройки</h2>
+      <form id="pin-gate" hidden>
+        <label>PIN
+          <input id="pin-input" type="password" inputmode="numeric" data-nav>
+        </label>
+        <button type="submit" data-nav>Войти</button>
+        <p id="pin-error" class="error" hidden>Неверный PIN</p>
+      </form>
+      <form id="settings-form" hidden>
+        <label>Ключ YouTube Data API
+          <input id="set-key" type="text" data-nav autocomplete="off">
+        </label>
+        <label>Разрешённые каналы (по одному в строке: @handle, UC… или ссылка)
+          <textarea id="set-channels" rows="6" data-nav></textarea>
+        </label>
+        <label>PIN для настроек (пусто — без PIN)
+          <input id="set-pin" type="text" inputmode="numeric" data-nav>
+        </label>
+        <div class="row">
+          <button type="submit" data-nav>Сохранить</button>
+          <button type="button" id="reset-btn" data-nav>Сбросить к config.js</button>
+          <button type="button" id="settings-close" data-nav>Закрыть</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
